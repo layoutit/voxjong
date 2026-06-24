@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "A 3D CSS Mahjong Solitaire game built with Nuxt and VoxCSS.",
+  "homepage": "https://voxjong.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LayoutitStudio/voxjong.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LayoutitStudio/voxjong/issues"
+  },
   "scripts": {
     "build": "NUXT_BUILD_DIR=.nuxt-build nuxt build",
     "audit": "npm audit --omit=dev --audit-level=moderate",
@@ -28,7 +37,10 @@
   ],
   "author": "Layoutit",
   "license": "ISC",
-  "description": "A 3D CSS Mahjong Solitaire game built with Nuxt and VoxCSS.",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10"
+  },
   "dependencies": {
     "@layoutit/voxcss": "^0.1.8",
     "nuxt": "^3.21.8"

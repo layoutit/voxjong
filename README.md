@@ -3,6 +3,21 @@
 Voxjong is a browser-based 3D CSS Mahjong Solitaire game built with Nuxt and
 VoxCSS. The board renders as DOM/CSS rather than canvas or WebGL.
 
+Live site: https://voxjong.com
+
+## What is here
+
+- A Nuxt single-page game in `src/app.vue`
+- Mahjong layout, deal, blocking, and pairing rules in `src/game/mahjong.ts`
+- Rule-level tests in `src/game/mahjong.test.ts`
+- Bundled tile, logo, and social images in `src/assets/`
+- Static web metadata in `public/`
+
+## Requirements
+
+- Node.js 22.12.0 or newer
+- npm 10 or newer
+
 ## Development
 
 Install dependencies:
@@ -17,19 +32,29 @@ Run the development server:
 npm run dev
 ```
 
-Production checks:
+## Commands
 
 ```sh
-npm run check
-npm run generate
-npm run audit
+npm run test      # run Mahjong rule tests
+npm run check     # run tests and production build
+npm run generate  # generate static output in dist/
+npm run audit     # fail on moderate-or-higher production advisories
+npm run audit:all # include low-severity production advisories
+npm run clean     # remove generated Nuxt/static output
 ```
 
-`npm run check` builds the Nuxt app. `npm run audit` fails on
-moderate-or-higher findings. Use `npm run audit:all` when you want to see
-low-severity advisories too.
+## Deployment
 
-## Assets
+The app is configured for static generation:
 
-Bundled tile and brand images live in `src/assets/`. Public web metadata files
-live in `public/`.
+```sh
+npm run generate
+```
+
+Generated output is written to `dist/`, which is ignored by Git.
+
+## Repository Notes
+
+`npm run audit` is the public release gate. `npm run audit:all` may report
+low-severity advisories from nested build tooling even when the release gate
+passes.
