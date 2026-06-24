@@ -1,0 +1,32 @@
+{
+  "name": "voxjong",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "NUXT_BUILD_DIR=.nuxt-build nuxt build",
+    "audit": "npm audit --omit=dev --audit-level=moderate",
+    "audit:all": "npm audit --omit=dev",
+    "check": "npm run build",
+    "clean": "nuxi cleanup && rm -rf .nuxt-build .nuxt-dev .nuxt-generate .nuxt-preview .output dist",
+    "dev": "NUXT_BUILD_DIR=.nuxt-dev nuxt dev",
+    "generate": "NUXT_BUILD_DIR=.nuxt-generate nuxt generate && rm -rf dist && cp -R .output/public dist",
+    "postinstall": "nuxt prepare",
+    "preview": "NUXT_BUILD_DIR=.nuxt-preview nuxt preview"
+  },
+  "keywords": [
+    "mahjong",
+    "mahjong-solitaire",
+    "voxels",
+    "3d-css",
+    "nuxt",
+    "puzzle-game"
+  ],
+  "author": "Layoutit",
+  "license": "ISC",
+  "description": "A 3D CSS Mahjong Solitaire game built with Nuxt and VoxCSS.",
+  "dependencies": {
+    "@layoutit/voxcss": "^0.1.8",
+    "nuxt": "^3.21.8"
+  }
+}
