@@ -5,110 +5,20 @@ import {
   renderScene,
   type HeadlessCameraHandle,
   type HeadlessRenderHandle,
-  type SceneState,
 } from "@layoutit/voxcss";
 import {
-  canPair,
-  createGameTiles,
-  getAvailablePairs,
-  getFreeTileIds,
-  requiredTileNames,
-  turtleCells,
-  type GameTile,
-  type MoveRecord,
-} from "./game/mahjong";
+  logoUrl,
+  socialCardUrl,
+  tileTextures,
+} from "./assets/voxjongAssets";
+import { useMahjongSession } from "./composables/useMahjongSession";
+import { useVoxjongSeo } from "./composables/useVoxjongSeo";
+import type { GameTile } from "./game/mahjong";
+import { createSceneState, createTileVoxels } from "./render/voxels";
 
 type ViewMode = "isometric" | "topdown";
 
-const imageModules = import.meta.glob("./assets/*.png", {
-  eager: true,
-  import: "default",
-}) as Record<string, string>;
-
-const tileTextures = Object.fromEntries(
-  Object.entries(imageModules).map(([path, url]) => [
-    path.split("/").pop()?.replace(".png", "") ?? path,
-    url,
-  ])
-) as Record<string, string>;
-const logoUrl = imageModules["./assets/voxjong-logo.png"];
-const socialCardUrl = imageModules["./assets/voxjong-social.png"];
-const pageTitle = "VoxJong - CSS Mahjong Solitaire";
-const pageDescription = "Play VoxJong, a free CSS Mahjong Solitaire.";
-
-const route = useRoute();
-const runtimeConfig = useRuntimeConfig();
-const siteUrl = computed(() => {
-  const raw =
-    (runtimeConfig.public.siteUrl as string | undefined)?.trim() ?? "";
-  return raw ? raw.replace(/\/+$/, "") : "";
-});
-const canonicalUrl = computed(() => {
-  if (!siteUrl.value) {
-    return undefined;
-  }
-  const path = route.path === "/" ? "" : route.path;
-  return `${siteUrl.value}${path}`;
-});
-const socialImageUrl = computed(() => {
-  if (!socialCardUrl) {
-    return undefined;
-  }
-  if (
-    socialCardUrl.startsWith("http://") ||
-    socialCardUrl.startsWith("https://")
-  ) {
-    return socialCardUrl;
-  }
-  return siteUrl.value ? `${siteUrl.value}${socialCardUrl}` : socialCardUrl;
-});
-const jsonLd = computed(() => ({
-  "@context": "https://schema.org",
-  "@type": "VideoGame",
-  name: "VoxJong",
-  description: pageDescription,
-  applicationCategory: "Game",
-  genre: "Mahjong Solitaire",
-  operatingSystem: "Any",
-  ...(canonicalUrl.value ? { url: canonicalUrl.value } : {}),
-}));
-
-useSeoMeta({
-  title: pageTitle,
-  description: pageDescription,
-  robots:
-    "index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1",
-  ogTitle: pageTitle,
-  ogDescription: pageDescription,
-  ogType: "website",
-  ogSiteName: "VoxJong",
-  ogUrl: () => canonicalUrl.value,
-  ogImage: () => socialImageUrl.value,
-  twitterCard: "summary_large_image",
-  twitterTitle: pageTitle,
-  twitterDescription: pageDescription,
-  twitterImage: () => socialImageUrl.value,
-});
-
-useHead(() => ({
-  link: canonicalUrl.value
-    ? [{ rel: "canonical", href: canonicalUrl.value }]
-    : [],
-  script: [
-    {
-      key: "voxjong-jsonld",
-      type: "application/ld+json",
-      children: JSON.stringify(jsonLd.value),
-    },
-  ],
-}));
-
-const missingTileNames = requiredTileNames.filter(
-  (name) => !tileTextures[name]
-);
-if (missingTileNames.length > 0) {
-  throw new Error(`Missing tile images: ${missingTileNames.join(", ")}`);
-}
+useVoxjongSeo(socialCardUrl);
 
 const rotX = ref(55);
 const rotY = ref(35);
@@ -316,114 +226,45 @@ function preventNativeGestureZoom(event: Event): void {
   event.preventDefault();
 }
 
-const tiles = ref<GameTile[]>(createGameTiles());
-const selectedTileId = ref<number | null>(null);
-const totalTiles = turtleCells.length;
-const elapsedSeconds = ref(0);
-let timerId: ReturnType<typeof setInterval> | null = null;
-
-const activeTiles = computed(() => tiles.value.filter((tile) => !tile.removed));
-const remainingTiles = computed(() => activeTiles.value.length);
-const isWon = computed(() => remainingTiles.value === 0);
-const selectedTile = computed(() =>
-  selectedTileId.value === null
-    ? null
-    : activeTiles.value.find(
-        (tile) => tile.id === selectedTileId.value && !tile.removed
-      ) ?? null
-);
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function formatElapsed(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${pad(minutes)}:${pad(seconds)}`;
-}
-
-const timerLabel = computed(() => formatElapsed(elapsedSeconds.value));
-
-function restartTimer(): void {
-  elapsedSeconds.value = 0;
-}
-
-const freeTileIds = computed(() => {
-  return new Set<number>(getFreeTileIds(activeTiles.value));
-});
-const freeTiles = computed(() =>
-  activeTiles.value.filter((tile) => freeTileIds.value.has(tile.id))
-);
-
-const availablePairs = computed(() => getAvailablePairs(freeTiles.value));
-
-const hasMoves = computed(() => availablePairs.value.length > 0);
-const hintedTileIds = ref<number[]>([]);
-const hintPairIndex = ref(0);
-const undoStack = ref<MoveRecord[]>([]);
-const redoStack = ref<MoveRecord[]>([]);
-const canUndo = computed(() => undoStack.value.length > 0);
-const canRedo = computed(() => redoStack.value.length > 0);
-
-function applyMoveRemoval(move: MoveRecord): boolean {
-  const first = tiles.value.find((tile) => tile.id === move.firstId);
-  const second = tiles.value.find((tile) => tile.id === move.secondId);
-  if (!first || !second) {
-    return false;
-  }
-  first.removed = true;
-  second.removed = true;
-  return true;
-}
-
-function applyMoveRestore(move: MoveRecord): boolean {
-  const first = tiles.value.find((tile) => tile.id === move.firstId);
-  const second = tiles.value.find((tile) => tile.id === move.secondId);
-  if (!first || !second) {
-    return false;
-  }
-  first.removed = false;
-  second.removed = false;
-  return true;
-}
-
-function recordRemovedPair(firstId: number, secondId: number): void {
-  undoStack.value.push({ firstId, secondId });
-  redoStack.value = [];
-}
-
-function clearMoveHistory(): void {
-  undoStack.value = [];
-  redoStack.value = [];
-}
+const {
+  tiles,
+  selectedTileId,
+  totalTiles,
+  activeTiles,
+  remainingTiles,
+  isWon,
+  selectedTile,
+  timerLabel,
+  freeTileIds,
+  hasMoves,
+  hintedTileIds,
+  canUndo,
+  canRedo,
+  clearHintState: clearGameHintState,
+  clearSelectionAndHintState: clearGameSelectionAndHintState,
+  removePair,
+  undoMove: undoGameMove,
+  redoMove: redoGameMove,
+  showHint: showGameHint,
+  resetGame,
+} = useMahjongSession();
 
 function undoMove(): void {
-  const move = undoStack.value.pop();
-  if (!move) {
+  if (!undoGameMove()) {
     return;
   }
-  if (!applyMoveRestore(move)) {
-    undoStack.value.push(move);
-    return;
-  }
-  redoStack.value.push(move);
-  clearSelectionAndHintState();
+  clearSelectedCubeVisual();
+  clearHintCubeVisual();
   sceneVersion.value += 1;
   scheduleCubeVisualRefresh();
 }
 
 function redoMove(): void {
-  const move = redoStack.value.pop();
-  if (!move) {
+  if (!redoGameMove()) {
     return;
   }
-  if (!applyMoveRemoval(move)) {
-    redoStack.value.push(move);
-    return;
-  }
-  undoStack.value.push(move);
-  clearSelectionAndHintState();
+  clearSelectedCubeVisual();
+  clearHintCubeVisual();
   sceneVersion.value += 1;
   scheduleCubeVisualRefresh();
 }
@@ -548,15 +389,14 @@ function clearHintCubeVisual(): void {
 }
 
 function clearHintState(): void {
-  hintedTileIds.value = [];
-  hintPairIndex.value = 0;
+  clearGameHintState();
   clearHintCubeVisual();
 }
 
 function clearSelectionAndHintState(): void {
-  selectedTileId.value = null;
+  clearGameSelectionAndHintState();
   clearSelectedCubeVisual();
-  clearHintState();
+  clearHintCubeVisual();
 }
 
 function clearSelectedCubeVisual(): void {
@@ -708,32 +548,10 @@ function scheduleCubeVisualRefresh(): void {
 }
 
 function showHint(): void {
-  const pairs = availablePairs.value;
-  if (remainingTiles.value <= 0 || pairs.length === 0) {
-    clearHintState();
+  if (!showGameHint()) {
+    clearHintCubeVisual();
     return;
   }
-
-  let sourcePairs = pairs;
-  const selectedId = selectedTileId.value;
-  if (selectedId !== null) {
-    const preferredPairs = pairs.filter(
-      ([left, right]) => left === selectedId || right === selectedId
-    );
-    if (preferredPairs.length === 0) {
-      clearHintState();
-      return;
-    }
-    sourcePairs = preferredPairs;
-  }
-
-  const pair = sourcePairs[hintPairIndex.value % sourcePairs.length];
-  if (!pair) {
-    clearHintState();
-    return;
-  }
-  hintPairIndex.value = (hintPairIndex.value + 1) % sourcePairs.length;
-  hintedTileIds.value = [pair[0], pair[1]];
   refreshHintVisual();
 }
 
@@ -772,20 +590,9 @@ function selectTile(tile: GameTile, cube: HTMLElement | null): void {
     return;
   }
 
-  const selectedIsFree = freeTileIds.value.has(selectedTile.id);
-  if (
-    selectedIsFree &&
-    clickedIsFree &&
-    canPair(selectedTile.code, tile.code)
-  ) {
-    const removedFirstId = selectedTile.id;
-    const removedSecondId = tile.id;
-    selectedTile.removed = true;
-    tile.removed = true;
-    recordRemovedPair(removedFirstId, removedSecondId);
-    selectedTileId.value = null;
+  if (removePair(selectedTile.id, tile.id)) {
     clearSelectedCubeVisual();
-    clearHintState();
+    clearHintCubeVisual();
     // Force a scene remount to avoid stale cubes lingering after pair removal.
     sceneVersion.value += 1;
     scheduleCubeVisualRefresh();
@@ -865,16 +672,6 @@ function onScenePointerCancel(): void {
   pointerStart.value = null;
 }
 
-function buildSceneState(nextVoxels: SceneState["voxels"]): SceneState {
-  return {
-    voxels: nextVoxels,
-    projection: "dimetric",
-    showFloor: false,
-    showWalls: false,
-    mergeVoxels: false,
-  };
-}
-
 function syncVoxcssCamera(): void {
   if (!voxcssCameraHandle) {
     return;
@@ -940,7 +737,7 @@ function mountVoxcssScene(): void {
   voxcssRenderHandle = renderScene({
     element: root,
     camera: voxcssCameraHandle,
-    scene: buildSceneState(voxels.value),
+    scene: createSceneState(voxels.value),
   });
 }
 
@@ -971,11 +768,6 @@ onMounted(() => {
     passive: false,
   });
 
-  timerId = setInterval(() => {
-    if (!isWon.value) {
-      elapsedSeconds.value += 1;
-    }
-  }, 1000);
   requestAnimationFrame(() => {
     rotX.value = clampRotX(rotX.value);
     rotY.value = clampRotY(rotY.value);
@@ -1009,38 +801,20 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(refreshRafId);
     refreshRafId = null;
   }
-  if (timerId) {
-    clearInterval(timerId);
-    timerId = null;
-  }
 });
 
 function newGame(): void {
   sceneVersion.value += 1;
-  tiles.value = createGameTiles();
+  resetGame();
   pinchDistance.value = null;
   pointerStart.value = null;
-  clearMoveHistory();
-  clearSelectionAndHintState();
-  restartTimer();
+  clearSelectedCubeVisual();
+  clearHintCubeVisual();
   scheduleCubeVisualRefresh();
 }
 
 const voxels = computed(() => {
-  return activeTiles.value.map((tile) => {
-    const isFree = freeTileIds.value.has(tile.id);
-    const color = isFree ? "#f4e4bf" : "#dcc89f";
-    return {
-      x: tile.gridX,
-      y: tile.gridY,
-      z: tile.z,
-      x2: tile.gridX2,
-      y2: tile.gridY2,
-      color,
-      texture: tileTextures[tile.code] ?? tileTextures.Man1,
-      shape: "cube" as const,
-    };
-  });
+  return createTileVoxels(activeTiles.value, freeTileIds.value, tileTextures);
 });
 
 watch(
@@ -1063,7 +837,7 @@ watch(
     if (!voxcssRenderHandle) {
       return;
     }
-    voxcssRenderHandle.setScene(buildSceneState(nextVoxels));
+    voxcssRenderHandle.setScene(createSceneState(nextVoxels));
     scheduleCubeVisualRefresh();
   },
   { flush: "post" }
