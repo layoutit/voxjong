@@ -45,13 +45,18 @@ export type TilePolygonData = {
   tileId: number;
   tileCode: TileCode;
   faceName: TileFaceName;
+  faceKey: string;
+  faceVisible: boolean;
   selectable: boolean;
   blocked: boolean;
+  removed: boolean;
   gridX: number;
   gridY: number;
   gridX2: number;
   gridY2: number;
   z: number;
+  spanStart?: number;
+  spanEnd?: number;
   textureSet: TilePalette["textureSet"];
   textureSource: string;
   textureSourcePath: string;
@@ -61,6 +66,7 @@ export type TileMeshSpec = {
   tileId: number;
   tileCode: TileCode;
   selectable: boolean;
+  removed: boolean;
   polygons: Polygon[];
 };
 
@@ -73,7 +79,7 @@ const tileTopUvs: NonNullable<Polygon["uvs"]> = [
 const tileHeight = 0.5;
 const gridUnitWorldScale = 0.5;
 
-type GridDimensions = {
+export type TileGridDimensions = {
   rows: number;
   cols: number;
 };
@@ -95,19 +101,26 @@ function faceData(
   faceName: TileFaceName,
   selectable: boolean,
   textureSet: TilePalette["textureSet"],
-  textureSource: string
+  textureSource: string,
+  faceVisible: boolean,
+  faceKey: string,
+  span?: Interval
 ): TilePolygonData {
   return {
     tileId: tile.id,
     tileCode: tile.code,
     faceName,
+    faceKey,
+    faceVisible,
     selectable,
     blocked: !selectable,
+    removed: tile.removed,
     gridX: tile.gridX,
     gridY: tile.gridY,
     gridX2: tile.gridX2,
     gridY2: tile.gridY2,
     z: tile.z,
+    ...(span ? { spanStart: span.start, spanEnd: span.end } : {}),
     textureSet,
     textureSource,
     textureSourcePath:
@@ -149,10 +162,10 @@ function createTileCellIndex(
   return cells;
 }
 
-function computeGridDimensions(
-  activeTiles: ReadonlyArray<GameTile>
-): GridDimensions {
-  return activeTiles.reduce<GridDimensions>(
+export function computeTileGridDimensions(
+  activeTiles: ReadonlyArray<Pick<GameTile, "gridX2" | "gridY2">>
+): TileGridDimensions {
+  return activeTiles.reduce<TileGridDimensions>(
     (dimensions, tile) => {
       return {
         rows: Math.max(dimensions.rows, tile.gridX2),
@@ -183,6 +196,14 @@ type Interval = {
   start: number;
   end: number;
 };
+
+function intervalKey(faceName: TileFaceName, span?: Interval): string {
+  return span ? `${faceName}:${span.start}:${span.end}` : faceName;
+}
+
+function sameInterval(left: Interval, right: Interval): boolean {
+  return left.start === right.start && left.end === right.end;
+}
 
 function sideSpanRange(tile: GameTile, faceName: TileFaceName): Interval {
   if (faceName === "left" || faceName === "right") {
@@ -261,9 +282,20 @@ function exposedSideSpans(
   return spans;
 }
 
+function stableSideSpans(tile: GameTile, faceName: TileFaceName): Interval[] {
+  const range = sideSpanRange(tile, faceName);
+  const spans: Interval[] = [];
+  for (let start = range.start; start < range.end; start += 1) {
+    for (let end = start + 1; end <= range.end; end += 1) {
+      spans.push({ start, end });
+    }
+  }
+  return spans;
+}
+
 function tilePolyBounds(
   tile: GameTile,
-  dimensions: GridDimensions
+  dimensions: TileGridDimensions
 ): { min: [number, number, number]; max: [number, number, number] } {
   const xOrigin = dimensions.rows / 2 + 1;
   const yOrigin = dimensions.cols / 2 + 1;
@@ -303,7 +335,7 @@ function sideSpanBounds(
   bounds: ReturnType<typeof tilePolyBounds>,
   faceName: TileFaceName,
   span: Interval,
-  dimensions: GridDimensions
+  dimensions: TileGridDimensions
 ): ReturnType<typeof tilePolyBounds> {
   const min = [...bounds.min] as [number, number, number];
   const max = [...bounds.max] as [number, number, number];
@@ -322,22 +354,30 @@ function sideSpanBounds(
 }
 
 export function createTileMeshSpecs(
-  activeTiles: ReadonlyArray<GameTile>,
+  tiles: ReadonlyArray<GameTile>,
   freeTileIds: ReadonlySet<number>,
   tileTextures: TileTextureMap,
-  palette: TilePalette = tilePalettes.light
+  palette: TilePalette = tilePalettes.light,
+  dimensions: TileGridDimensions = computeTileGridDimensions(tiles),
+  activeTiles: ReadonlyArray<GameTile> = tiles.filter((tile) => !tile.removed)
 ): TileMeshSpec[] {
   const cells = createTileCellIndex(activeTiles);
-  const dimensions = computeGridDimensions(activeTiles);
-  return activeTiles.flatMap((tile) => {
-    const selectable = freeTileIds.has(tile.id);
+  return tiles.flatMap((tile) => {
+    const active = !tile.removed;
+    const selectable = active && freeTileIds.has(tile.id);
     const colors = tileColors(palette, selectable);
     const texture = tileTextures[tile.code] ?? tileTextures.Man1;
     const bounds = tilePolyBounds(tile, dimensions);
     const polygons: Polygon[] = [];
 
     for (const faceName of sideFaceNames) {
-      for (const span of exposedSideSpans(tile, faceName, activeTiles)) {
+      const visibleSpans = active
+        ? exposedSideSpans(tile, faceName, activeTiles)
+        : [];
+      for (const span of stableSideSpans(tile, faceName)) {
+        const faceVisible = visibleSpans.some((visibleSpan) =>
+          sameInterval(visibleSpan, span)
+        );
         polygons.push(
           ...polygonsForFace(
             sideSpanBounds(bounds, faceName, span, dimensions),
@@ -349,7 +389,10 @@ export function createTileMeshSpecs(
                 faceName,
                 selectable,
                 palette.textureSet,
-                texture
+                texture,
+                faceVisible,
+                intervalKey(faceName, span),
+                span
               ),
             }
           )
@@ -357,25 +400,31 @@ export function createTileMeshSpecs(
       }
     }
 
-    if (!hasCoveredTop(tile, cells)) {
-      polygons.push(
-        ...polygonsForFace(bounds, "top", colors.side, {
-          color: colors.top,
+    polygons.push(
+      ...polygonsForFace(bounds, "top", colors.side, {
+        color: colors.top,
+        texture,
+        material: {
           texture,
-          material: {
-            texture,
-            key: `${palette.textureSet}:${tile.code}`,
-            presentation: {
-              backend: "image",
-              imageRendering: "auto",
-              lighting: "source",
-            },
+          key: `${palette.textureSet}:${tile.code}`,
+          presentation: {
+            backend: "image",
+            imageRendering: "auto",
+            lighting: "source",
           },
-          uvs: tileTopUvs,
-          data: faceData(tile, "top", selectable, palette.textureSet, texture),
-        })
-      );
-    }
+        },
+        uvs: tileTopUvs,
+        data: faceData(
+          tile,
+          "top",
+          selectable,
+          palette.textureSet,
+          texture,
+          active && !hasCoveredTop(tile, cells),
+          intervalKey("top")
+        ),
+      })
+    );
 
     if (polygons.length === 0) {
       return [];
@@ -385,21 +434,26 @@ export function createTileMeshSpecs(
       tileId: tile.id,
       tileCode: tile.code,
       selectable,
+      removed: tile.removed,
       polygons,
     };
   });
 }
 
 export function createTilePolygons(
-  activeTiles: ReadonlyArray<GameTile>,
+  tiles: ReadonlyArray<GameTile>,
   freeTileIds: ReadonlySet<number>,
   tileTextures: TileTextureMap,
-  palette: TilePalette = tilePalettes.light
+  palette: TilePalette = tilePalettes.light,
+  dimensions: TileGridDimensions = computeTileGridDimensions(tiles),
+  activeTiles: ReadonlyArray<GameTile> = tiles.filter((tile) => !tile.removed)
 ): Polygon[] {
   return createTileMeshSpecs(
-    activeTiles,
+    tiles,
     freeTileIds,
     tileTextures,
-    palette
+    palette,
+    dimensions,
+    activeTiles
   ).flatMap((tile) => tile.polygons);
 }

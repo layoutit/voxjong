@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Polygon } from "@layoutit/polycss";
 import { turtleCells, type GameTile, type TileCode } from "../game/mahjong";
 import {
+  computeTileGridDimensions,
   createTileMeshSpecs,
   createTilePolygons,
   tilePalettes,
@@ -32,11 +33,21 @@ const textures = {
 } as TileTextureMap;
 
 function polygonForFace(polygons: Polygon[], faceName: TileFaceName): Polygon {
-  const polygon = polygons.find((entry) => entry.data?.faceName === faceName);
+  const polygon =
+    polygons.find(
+      (entry) =>
+        entry.data?.faceName === faceName && entry.data?.faceVisible !== false
+    ) ?? polygons.find((entry) => entry.data?.faceName === faceName);
   if (!polygon) {
     throw new Error(`Expected ${faceName} polygon.`);
   }
   return polygon;
+}
+
+function visibleFaceNames(polygons: Polygon[]): Array<TileFaceName | undefined> {
+  return polygons
+    .filter((polygon) => polygon.data?.faceVisible !== false)
+    .map((polygon) => polygon.data?.faceName);
 }
 
 describe("PolyCSS tile rendering", () => {
@@ -52,8 +63,8 @@ describe("PolyCSS tile rendering", () => {
       tileCode: "Man2",
       selectable: true,
     });
-    expect(mesh?.polygons).toHaveLength(5);
-    expect(mesh?.polygons.map((polygon) => polygon.data?.faceName)).toEqual([
+    expect(mesh?.polygons).toHaveLength(13);
+    expect(visibleFaceNames(mesh?.polygons ?? [])).toEqual([
       "right",
       "left",
       "front",
@@ -81,6 +92,8 @@ describe("PolyCSS tile rendering", () => {
         tileId: 1,
         tileCode: "Man2",
         faceName: "top",
+        faceKey: "top",
+        faceVisible: true,
         selectable: true,
         blocked: false,
         gridX: 4,
@@ -103,6 +116,8 @@ describe("PolyCSS tile rendering", () => {
         tileId: 1,
         tileCode: "Man2",
         faceName: "right",
+        faceKey: "right:5:7",
+        faceVisible: true,
         selectable: true,
         blocked: false,
       },
@@ -131,10 +146,12 @@ describe("PolyCSS tile rendering", () => {
     );
     const baseFaces = meshSpecs
       .find((mesh) => mesh.tileId === 1)
-      ?.polygons.map((polygon) => polygon.data?.faceName);
+      ?.polygons.filter((polygon) => polygon.data?.faceVisible !== false)
+      .map((polygon) => polygon.data?.faceName);
     const neighborFaces = meshSpecs
       .find((mesh) => mesh.tileId === 2)
-      ?.polygons.map((polygon) => polygon.data?.faceName);
+      ?.polygons.filter((polygon) => polygon.data?.faceVisible !== false)
+      .map((polygon) => polygon.data?.faceName);
 
     expect(baseFaces).toEqual(["left", "front", "back", "top"]);
     expect(neighborFaces).toEqual(["right", "front", "back", "top"]);
@@ -162,7 +179,9 @@ describe("PolyCSS tile rendering", () => {
     );
     const baseMesh = meshSpecs.find((mesh) => mesh.tileId === 1);
     const baseRightFaces = baseMesh?.polygons.filter(
-      (polygon) => polygon.data?.faceName === "right"
+      (polygon) =>
+        polygon.data?.faceName === "right" &&
+        polygon.data?.faceVisible !== false
     );
 
     expect(baseRightFaces).toHaveLength(1);
@@ -189,6 +208,7 @@ describe("PolyCSS tile rendering", () => {
     );
     const faceCounts = meshSpecs
       .flatMap((mesh) => mesh.polygons)
+      .filter((polygon) => polygon.data?.faceVisible !== false)
       .reduce<Record<string, number>>((counts, polygon) => {
         const faceName = polygon.data?.faceName;
         if (!faceName) {
@@ -198,7 +218,7 @@ describe("PolyCSS tile rendering", () => {
         return counts;
       }, {});
 
-    expect(meshSpecs).toHaveLength(88);
+    expect(meshSpecs).toHaveLength(144);
     expect(faceCounts).toEqual({
       left: 22,
       right: 22,
@@ -240,6 +260,61 @@ describe("PolyCSS tile rendering", () => {
         z: 4,
       },
     });
+  });
+
+  it("keeps remaining tile geometry stable when an edge tile is removed", () => {
+    const activeTiles = turtleCells.map((cell): GameTile => {
+      return {
+        ...cell,
+        code: "Man1",
+        removed: false,
+      };
+    });
+    const stableDimensions = computeTileGridDimensions(activeTiles);
+    const rightEdgeTile = activeTiles.reduce((rightmost, entry) => {
+      return entry.gridX2 > rightmost.gridX2 ? entry : rightmost;
+    }, activeTiles[0] as GameTile);
+    const remainingTiles = activeTiles.filter(
+      (entry) => entry.id !== rightEdgeTile.id
+    );
+    const fullFreeIds = new Set(activeTiles.map((entry) => entry.id));
+    const remainingFreeIds = new Set(remainingTiles.map((entry) => entry.id));
+    const beforeStable = createTileMeshSpecs(
+      activeTiles,
+      fullFreeIds,
+      textures,
+      tilePalettes.light,
+      stableDimensions
+    );
+    const afterStable = createTileMeshSpecs(
+      remainingTiles,
+      remainingFreeIds,
+      textures,
+      tilePalettes.light,
+      stableDimensions
+    );
+    const afterDynamic = createTileMeshSpecs(
+      remainingTiles,
+      remainingFreeIds,
+      textures
+    );
+
+    const beforeTop = polygonForFace(
+      beforeStable.find((mesh) => mesh.tileId === 0)?.polygons ?? [],
+      "top"
+    );
+    const afterStableTop = polygonForFace(
+      afterStable.find((mesh) => mesh.tileId === 0)?.polygons ?? [],
+      "top"
+    );
+    const afterDynamicTop = polygonForFace(
+      afterDynamic.find((mesh) => mesh.tileId === 0)?.polygons ?? [],
+      "top"
+    );
+
+    expect(rightEdgeTile.id).toBe(86);
+    expect(afterStableTop.vertices).toEqual(beforeTop.vertices);
+    expect(afterDynamicTop.vertices).not.toEqual(beforeTop.vertices);
   });
 
   it("marks blocked tile polygons and falls back to the Man1 top texture", () => {
@@ -297,6 +372,6 @@ describe("PolyCSS tile rendering", () => {
         new Set([1]),
         textures
       )
-    ).toHaveLength(10);
+    ).toHaveLength(26);
   });
 });

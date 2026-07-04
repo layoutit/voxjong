@@ -3,10 +3,7 @@ node_modules
 .env.*
 !.env.example
 .local/
-.nuxt
-.nuxt-*
-.output
-.nitro
+.vite/
 .playwright-cli
 dist
 coverage

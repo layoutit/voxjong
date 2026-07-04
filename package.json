@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "A 3D CSS Mahjong Solitaire game built with Nuxt and PolyCSS.",
+  "description": "A 3D CSS Mahjong Solitaire game built with Vue, Vite, and PolyCSS.",
   "homepage": "https://voxjong.com",
   "repository": {
     "type": "git",
@@ -13,18 +13,19 @@
     "url": "https://github.com/LayoutitStudio/voxjong/issues"
   },
   "scripts": {
-    "build": "NUXT_BUILD_DIR=.nuxt-build nuxt build",
+    "build": "vite build",
     "audit": "npm audit --omit=dev --audit-level=moderate",
     "audit:all": "npm audit --omit=dev",
     "check": "npm run test && npm run build",
-    "clean": "nuxi cleanup && rm -rf .nuxt-build .nuxt-dev .nuxt-generate .nuxt-preview .output dist",
-    "dev": "NUXT_BUILD_DIR=.nuxt-dev nuxt dev",
-    "generate": "NUXT_BUILD_DIR=.nuxt-generate nuxt generate && rm -rf dist && cp -R .output/public dist",
-    "postinstall": "nuxt prepare",
-    "preview": "NUXT_BUILD_DIR=.nuxt-preview nuxt preview",
+    "clean": "rm -rf dist .vite",
+    "dev": "vite dev",
+    "generate": "npm run build",
+    "preview": "vite preview",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "vite": "^7.3.5",
     "vitest": "^3.2.6"
   },
   "keywords": [
@@ -32,7 +33,8 @@
     "mahjong-solitaire",
     "voxels",
     "3d-css",
-    "nuxt",
+    "vue",
+    "vite",
     "puzzle-game"
   ],
   "author": "Layoutit",
@@ -43,6 +45,6 @@
   },
   "dependencies": {
     "@layoutit/polycss": "^0.2.7",
-    "nuxt": "^3.21.8"
+    "vue": "^3.5.38"
   }
 }

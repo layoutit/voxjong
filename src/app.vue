@@ -8,16 +8,12 @@ import {
   type PolyPerspectiveCameraHandle,
   type PolySceneHandle,
 } from "@layoutit/polycss";
-import {
-  logoUrl,
-  socialCardUrl,
-  tileTextureSets,
-} from "./assets/voxjongAssets";
+import { logoUrl, tileTextureSets } from "./assets/voxjongAssets";
 import { useMahjongSession } from "./composables/useMahjongSession";
-import { useVoxjongSeo } from "./composables/useVoxjongSeo";
 import { useVoxjongView } from "./composables/useVoxjongView";
-import type { GameTile } from "./game/mahjong";
+import { turtleCells, type GameTile } from "./game/mahjong";
 import {
+  computeTileGridDimensions,
   createTileMeshSpecs,
   tilePalettes,
   type TileMeshSpec,
@@ -34,12 +30,8 @@ type ViewTransitionDocument = Document & {
 const clickMoveTolerance = 11;
 const polyCameraZoomScale = 50;
 const polySceneDepthOffset = 50;
+const turtleGridDimensions = computeTileGridDimensions(turtleCells);
 const themeStorageKey = "voxjong-theme";
-const runtimeConfig = useRuntimeConfig() as {
-  public: {
-    voxjongVersion?: unknown;
-  };
-};
 const themeMetaColors = {
   light: "#165930",
   dark: "#07110e",
@@ -61,11 +53,10 @@ let refreshRafId: number | null = null;
 let polyCameraHandle: PolyPerspectiveCameraHandle | null = null;
 let polySceneHandle: PolySceneHandle | null = null;
 const polyTileMeshHandles = new Map<number, PolyMeshHandle>();
-let systemThemeQuery: MediaQueryList | null = null;
 let tileTextureObserver: MutationObserver | null = null;
 let tileTextureRefreshRafId: number | null = null;
 
-const themePreference = ref<ThemeName | "system">("system");
+const themePreference = ref<ThemeName>("light");
 const resolvedTheme = ref<ThemeName>("light");
 const isDarkTheme = computed(() => resolvedTheme.value === "dark");
 const themeToggleLabel = computed(() =>
@@ -78,13 +69,10 @@ const themeMetaColor = computed(() => themeMetaColors[resolvedTheme.value]);
 const tilePalette = computed(() => tilePalettes[resolvedTheme.value]);
 const tileTextureMap = computed(() => tileTextureSets[resolvedTheme.value]);
 const voxjongVersionLabel = computed(() => {
-  const version = runtimeConfig.public.voxjongVersion;
-  return typeof version === "string" && version.trim()
-    ? `v${version}`
-    : "v0.0";
+  const version =
+    typeof __VOXJONG_VERSION__ === "string" ? __VOXJONG_VERSION__ : "0.0";
+  return version.trim() ? `v${version}` : "v0.0";
 });
-
-useVoxjongSeo(socialCardUrl, { themeColor: themeMetaColor });
 
 const {
   rotX,
@@ -127,13 +115,9 @@ const {
   resetGame,
 } = useMahjongSession();
 
-function getSystemTheme(): ThemeName {
-  return systemThemeQuery?.matches ? "dark" : "light";
-}
-
-function applyThemePreference(preference: ThemeName | "system"): void {
+function applyThemePreference(preference: ThemeName): void {
   themePreference.value = preference;
-  resolvedTheme.value = preference === "system" ? getSystemTheme() : preference;
+  resolvedTheme.value = preference;
 }
 
 function readStoredThemePreference(): ThemeName | null {
@@ -153,14 +137,21 @@ function persistThemePreference(preference: ThemeName): void {
   }
 }
 
-function syncSystemTheme(): void {
-  if (themePreference.value === "system") {
-    resolvedTheme.value = getSystemTheme();
+function syncThemeMetaColor(color: string): void {
+  if (typeof document === "undefined") {
+    return;
   }
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.append(meta);
+  }
+  meta.content = color;
 }
 
 async function applyThemePreferenceAndWait(
-  preference: ThemeName | "system"
+  preference: ThemeName
 ): Promise<void> {
   applyThemePreference(preference);
   await nextTick();
@@ -307,11 +298,15 @@ function setSelectedTileVisual(
 
 function syncTileInteractivity(): void {
   for (const handle of polyTileMeshHandles.values()) {
-    handle.element.classList.remove("is-selectable", "is-blocked");
+    handle.element.classList.remove("is-selectable", "is-blocked", "is-removed");
   }
-  for (const tile of activeTiles.value) {
+  for (const tile of tiles.value) {
     const mesh = findMeshForTile(tile);
     if (!mesh) {
+      continue;
+    }
+    if (tile.removed) {
+      mesh.classList.add("is-removed");
       continue;
     }
     const selectable = freeTileIds.value.has(tile.id);
@@ -534,29 +529,49 @@ function syncPolyMeshMetadata(
   handle.element.dataset.tileId = String(tileMesh.tileId);
   handle.element.dataset.tileCode = tileMesh.tileCode;
   handle.element.dataset.selectable = String(tileMesh.selectable);
+  handle.element.dataset.removed = String(tileMesh.removed);
 
-  for (const polygon of tileMesh.polygons) {
+  const faces = handle.element.querySelectorAll<HTMLElement>(
+    "[data-poly-index]"
+  );
+
+  for (const face of faces) {
+    const polygonIndex = Number.parseInt(face.dataset.polyIndex ?? "", 10);
+    const polygon = Number.isFinite(polygonIndex)
+      ? tileMesh.polygons[polygonIndex]
+      : undefined;
     const data = polygon.data as TilePolygonData | undefined;
     if (!data) {
       continue;
     }
-    const faces = handle.element.querySelectorAll<HTMLElement>(
-      `[data-facename="${data.faceName}"]`
-    );
-    for (const face of faces) {
-      face.dataset.tileId = String(data.tileId);
-      face.dataset.tileCode = data.tileCode;
-      face.dataset.selectable = String(data.selectable);
-      face.dataset.blocked = String(data.blocked);
-      face.dataset.textureSet = data.textureSet;
-      face.dataset.textureSource = data.textureSource;
-      face.dataset.textureSourcePath = data.textureSourcePath;
-      face.style.setProperty(
-        "--tile-texture-url",
-        data.faceName === "top" ? `url("${data.textureSource}")` : "none"
-      );
+    face.setAttribute("data-facename", data.faceName);
+    face.dataset.faceKey = data.faceKey;
+    face.dataset.faceVisible = String(data.faceVisible);
+    face.dataset.tileId = String(data.tileId);
+    face.dataset.tileCode = data.tileCode;
+    face.dataset.selectable = String(data.selectable);
+    face.dataset.blocked = String(data.blocked);
+    face.dataset.removed = String(data.removed);
+    face.dataset.textureSet = data.textureSet;
+    face.dataset.textureSource = data.textureSource;
+    face.dataset.textureSourcePath = data.textureSourcePath;
+    if (data.spanStart !== undefined && data.spanEnd !== undefined) {
+      face.dataset.spanStart = String(data.spanStart);
+      face.dataset.spanEnd = String(data.spanEnd);
+    } else {
+      delete face.dataset.spanStart;
+      delete face.dataset.spanEnd;
     }
+    face.classList.toggle("is-face-hidden", !data.faceVisible);
+    face.style.setProperty(
+      "--tile-texture-url",
+      data.faceName === "top" ? `url("${data.textureSource}")` : "none"
+    );
   }
+}
+
+function meshPolygonCount(handle: PolyMeshHandle): number {
+  return handle.element.querySelectorAll("[data-poly-index]").length;
 }
 
 function syncPolyCamera(): void {
@@ -606,11 +621,13 @@ function syncPolyTileMeshes(nextTileMeshes = tileMeshes.value): void {
   for (const tileMesh of nextTileMeshes) {
     const existingHandle = polyTileMeshHandles.get(tileMesh.tileId);
     if (existingHandle) {
-      existingHandle.setPolygons(tileMesh.polygons, {
-        merge: false,
-        stableDom: true,
-        recomputeAutoCenter: false,
-      });
+      if (meshPolygonCount(existingHandle) !== tileMesh.polygons.length) {
+        existingHandle.setPolygons(tileMesh.polygons, {
+          merge: false,
+          stableDom: true,
+          recomputeAutoCenter: false,
+        });
+      }
       syncPolyMeshMetadata(existingHandle, tileMesh);
       continue;
     }
@@ -663,7 +680,6 @@ function mountPolyScene(): void {
   });
   polySceneHandle = createPolyScene(root, {
     camera: polyCameraHandle,
-    autoCenter: true,
     textureBackend: "image",
     textureImageRendering: "auto",
     textureLeafSizing: "local",
@@ -682,9 +698,7 @@ function mountPolyScene(): void {
 }
 
 onMounted(() => {
-  systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-  applyThemePreference(readStoredThemePreference() ?? "system");
-  systemThemeQuery.addEventListener("change", syncSystemTheme);
+  applyThemePreference(readStoredThemePreference() ?? "light");
   requestAnimationFrame(() => {
     clampCurrentView();
     mountPolyScene();
@@ -693,8 +707,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  systemThemeQuery?.removeEventListener("change", syncSystemTheme);
-  systemThemeQuery = null;
   destroyPolyScene();
   clearSelectedTileVisual();
   clearHintTileVisual();
@@ -716,12 +728,22 @@ function newGame(): void {
 
 const tileMeshes = computed(() => {
   return createTileMeshSpecs(
-    activeTiles.value,
+    tiles.value,
     freeTileIds.value,
     tileTextureMap.value,
-    tilePalette.value
+    tilePalette.value,
+    turtleGridDimensions,
+    activeTiles.value
   );
 });
+
+watch(
+  themeMetaColor,
+  (color) => {
+    syncThemeMetaColor(color);
+  },
+  { immediate: true }
+);
 
 watch(
   [zoom, rotX, rotY],

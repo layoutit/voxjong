@@ -4,7 +4,7 @@ VoxJong is a browser-based 3D CSS Mahjong Solitaire game that renders the board
 as real HTML/CSS 3D geometry through [PolyCSS](https://github.com/LayoutitStudio/polycss),
 without a WebGL or canvas renderer. The game generates a solvable turtle layout
 in TypeScript, projects the active Mahjong tiles into textured CSS meshes, and
-ships as a static Nuxt app.
+ships as a static Vite app.
 
 Play the live version: [voxjong.com](https://voxjong.com)
 
@@ -27,7 +27,7 @@ npm run generate
 npm run audit
 ```
 
-`npm run check` runs the focused rule/render tests and a Nuxt production build.
+`npm run check` runs the focused rule/render tests and a Vite production build.
 `npm run generate` writes static output to the ignored `dist/` folder.
 
 ## How It Works
@@ -47,11 +47,11 @@ then maps that game state into PolyCSS mesh data for the runtime in
 
 ## Build and Runtime
 
-The browser does not fetch or generate tile art at runtime. Tile, logo, and
-social images are bundled from `src/assets/`, validated during module load, and
-referenced by the generated Nuxt build.
+The browser does not fetch or generate tile art at runtime. Tile and logo
+images are bundled from `src/assets/`, the social card is served from `public/`
+for static metadata, and the assets are referenced by the generated Vite build.
 
-VoxJong is designed as a static site. The generated Nuxt output is ignored by
+VoxJong is designed as a static site. The generated Vite output is ignored by
 Git, so the repository keeps source, tests, and bundled assets without checking
 in build output.
 
