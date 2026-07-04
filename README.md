@@ -45,16 +45,6 @@ tiles, selection, hints, timer, undo, redo, and new-game resets. `src/render`
 then maps that game state into PolyCSS mesh data for the runtime in
 `src/app.vue`.
 
-## Build and Runtime
-
-The browser does not fetch or generate tile art at runtime. Tile and logo
-images are bundled from `src/assets/`, the social card is served from `public/`
-for static metadata, and the assets are referenced by the generated Vite build.
-
-VoxJong is designed as a static site. The generated Vite output is ignored by
-Git, so the repository keeps source, tests, and bundled assets without checking
-in build output.
-
 ## License
 
 VoxJong source code is Copyright (C) 2026 Layoutit and licensed under
