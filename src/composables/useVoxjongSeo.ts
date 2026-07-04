@@ -1,9 +1,17 @@
-import { computed } from "vue";
+import { computed, type Ref } from "vue";
 
 const pageTitle = "VoxJong - CSS Mahjong Solitaire";
 const pageDescription = "Play VoxJong, a free CSS Mahjong Solitaire.";
+const defaultThemeColor = "#165930";
 
-export function useVoxjongSeo(socialCardUrl: string): void {
+type VoxjongSeoOptions = {
+  themeColor?: Ref<string> | string;
+};
+
+export function useVoxjongSeo(
+  socialCardUrl: string,
+  options: VoxjongSeoOptions = {}
+): void {
   const route = useRoute();
   const runtimeConfig = useRuntimeConfig();
   const siteUrl = computed(() => {
@@ -37,6 +45,14 @@ export function useVoxjongSeo(socialCardUrl: string): void {
     operatingSystem: "Any",
     ...(canonicalUrl.value ? { url: canonicalUrl.value } : {}),
   }));
+  const themeColor = computed(() => {
+    if (!options.themeColor) {
+      return defaultThemeColor;
+    }
+    return typeof options.themeColor === "string"
+      ? options.themeColor
+      : options.themeColor.value;
+  });
 
   useSeoMeta({
     title: pageTitle,
@@ -59,6 +75,13 @@ export function useVoxjongSeo(socialCardUrl: string): void {
     link: canonicalUrl.value
       ? [{ rel: "canonical", href: canonicalUrl.value }]
       : [],
+    meta: [
+      {
+        key: "theme-color",
+        name: "theme-color",
+        content: themeColor.value,
+      },
+    ],
     script: [
       {
         key: "voxjong-jsonld",

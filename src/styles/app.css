@@ -8,11 +8,19 @@
   overscroll-behavior: none;
 }
 
+:global(::view-transition-old(root)),
+:global(::view-transition-new(root)) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .app {
   --ui-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   --ui-font-size: 14px;
   --ui-line-height: 1.2;
+  --theme-transition-duration: 260ms;
+  --theme-transition-easing: cubic-bezier(0.22, 1, 0.36, 1);
   --ui-color: #dfcc91;
   --ui-color-muted: #cdbb85;
   --ui-color-hover: #e6d39a;
@@ -26,6 +34,32 @@
   --ui-thumb: #ebd796;
   --ui-thumb-hover: #f0e0ab;
   --ui-thumb-active: #f6e7b8;
+  --ui-color-scheme: light;
+  --table-bg-light-start: #2a7f49;
+  --table-bg-light-mid: #1a6a3b;
+  --table-bg-light-end: #0d4727;
+  --table-bg-dark-start: #0e1814;
+  --table-bg-dark-mid: #08110e;
+  --table-bg-dark-end: #030807;
+  --tile-face: #e6d8b8;
+  --tile-top: #f6ead0;
+  --tile-side: #e1d2af;
+  --tile-hint: #ffe5a8;
+  --tile-hint-top: #ffe5a8;
+  --tile-active: #ffcb87;
+  --tile-active-top: #ffcb87;
+  --tile-hover: #ffe5a8;
+  --tile-hover-top: #ffe5a8;
+  --tile-blocked: #f6ead0;
+  --tile-blocked-top: #f6ead0;
+  --tile-blocked-top-opacity: 1;
+  --tile-disabled-art-cover: var(--tile-top);
+  --tile-disabled-art-cover-opacity: 0.5;
+  --tile-top-filter: none;
+  --tile-face-outline: rgba(110, 94, 54, 0.16);
+  --github-corner-bg: #ffffff;
+  --github-corner-color: #104d2b;
+  --win-overlay-color: #f7e6b2;
   --ui-gap-s: 6px;
   --ui-gap-m: 10px;
   position: fixed;
@@ -35,12 +69,73 @@
   user-select: none;
   touch-action: none;
   overscroll-behavior: none;
+  isolation: isolate;
+  color-scheme: var(--ui-color-scheme);
   background: radial-gradient(
     circle at center,
-    #2a7f49 0%,
-    #1a6a3b 44%,
-    #0d4727 100%
+    var(--table-bg-light-start) 0%,
+    var(--table-bg-light-mid) 44%,
+    var(--table-bg-light-end) 100%
   );
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
+}
+
+.app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at center,
+    var(--table-bg-dark-start) 0%,
+    var(--table-bg-dark-mid) 44%,
+    var(--table-bg-dark-end) 100%
+  );
+  opacity: 0;
+  transition: opacity var(--theme-transition-duration)
+    var(--theme-transition-easing);
+}
+
+.app[data-theme="dark"]::before {
+  opacity: 1;
+}
+
+.app[data-theme="dark"] {
+  --ui-color: #e2d5a6;
+  --ui-color-muted: #beb27b;
+  --ui-color-hover: #f0e5b5;
+  --ui-color-active: #fff0be;
+  --ui-track: #5c6a5f;
+  --ui-track-hover: #72806f;
+  --ui-track-active: #91a084;
+  --ui-thumb-border: #a99a68;
+  --ui-thumb-border-hover: #c1b276;
+  --ui-thumb-border-active: #d6c985;
+  --ui-thumb: #cfc18a;
+  --ui-thumb-hover: #dfd399;
+  --ui-thumb-active: #f1e5aa;
+  --ui-color-scheme: dark;
+  --tile-face: #1e1e1e;
+  --tile-top: #1e1e1e;
+  --tile-side: #2a2a2a;
+  --tile-hint: #332a1c;
+  --tile-hint-top: #3b301f;
+  --tile-active: #3a2d1d;
+  --tile-active-top: #49361f;
+  --tile-hover: #332a1c;
+  --tile-hover-top: #3b301f;
+  --tile-blocked: #181818;
+  --tile-blocked-top: var(--tile-top);
+  --tile-blocked-top-opacity: 1;
+  --tile-disabled-art-cover: var(--tile-top);
+  --tile-disabled-art-cover-opacity: 0.46;
+  --tile-top-filter: none;
+  --tile-face-outline: rgba(235, 215, 150, 0.12);
+  --github-corner-bg: #dfd2a3;
+  --github-corner-color: #07110e;
+  --win-overlay-color: #f2e3b4;
 }
 
 .logo {
@@ -64,6 +159,8 @@
   color: var(--ui-color-muted);
   margin-bottom: 9px;
   opacity: 0.75;
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .sr-only {
@@ -133,82 +230,148 @@
 .scene {
   position: absolute;
   inset: 0;
+  z-index: 1;
   overflow: hidden;
   touch-action: none;
 }
 
-.scene :deep(.voxcss-camera) {
+.scene :deep(.polycss-camera) {
   width: 100%;
   height: 100%;
   min-height: 100%;
 }
 
-.scene :deep(.voxcss-floor-z) {
-  background: transparent !important;
-  background-image: none !important;
-}
-
-.scene :deep(.voxcss-cube-face) {
-  background-color: #e6d8b8;
+.scene :deep(.polycss-mesh [data-facename]) {
+  box-shadow: inset 0 0 0 0.5px var(--tile-face-outline);
   cursor: default;
+  transition: background-color var(--theme-transition-duration)
+      var(--theme-transition-easing),
+    color var(--theme-transition-duration) var(--theme-transition-easing),
+    opacity var(--theme-transition-duration) var(--theme-transition-easing),
+    filter var(--theme-transition-duration) var(--theme-transition-easing);
 }
 
-.scene :deep(.voxcss-cube-face--t) {
-  background-color: #f6ead0 !important;
+.scene :deep(.polycss-mesh [data-facename="top"]) {
+  background-color: var(--tile-top) !important;
+  background-image: none !important;
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-origin: content-box !important;
+  background-clip: border-box !important;
+  box-sizing: border-box;
+  color: var(--tile-top) !important;
+  filter: var(--tile-top-filter);
+  image-rendering: auto !important;
+  overflow: hidden;
+  padding: calc(var(--polycss-atlas-width, 50px) * 0.12);
+  position: relative;
+}
+
+.scene :deep(.polycss-mesh [data-facename="top"])::before {
+  content: "";
+  position: absolute;
+  inset: calc(var(--polycss-atlas-width, 50px) * 0.12);
+  background-image: var(--tile-texture-url);
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
-  background-origin: content-box;
-  background-clip: border-box;
-  padding: 6px;
-  transform: translateZ(var(--voxcss-layer-half)) rotate(-90deg);
+  transform: rotate(180deg);
+  transform-origin: center;
+  pointer-events: none;
 }
 
-.scene :deep(.voxcss-projection--dimetric .voxcss-cube-face--t) {
-  transform: translateZ(0) rotate(-90deg);
+.scene :deep(.polycss-mesh.is-selectable [data-facename="top"])::before {
+  opacity: 0.9;
 }
 
-.scene :deep(.voxcss-cube-face--b),
-.scene :deep(.voxcss-cube-face--bl),
-.scene :deep(.voxcss-cube-face--br),
-.scene :deep(.voxcss-cube-face--fl),
-.scene :deep(.voxcss-cube-face--fr) {
-  background-color: #e1d2af !important;
+.scene :deep(.polycss-mesh [data-facename]:not([data-facename="top"])) {
+  background-color: var(--tile-side) !important;
+  color: var(--tile-side) !important;
   background-image: none !important;
 }
 
-.scene :deep(.voxcss-cube.is-hint .voxcss-cube-face) {
-  background-color: #ffe5a8 !important;
+.scene :deep(.polycss-mesh [data-facename="front"]),
+.scene :deep(.polycss-mesh [data-facename="back"]) {
+  filter: brightness(0.925);
 }
 
-.scene :deep(.voxcss-cube.is-active .voxcss-cube-face) {
-  background-color: #ffcb87 !important;
+.scene :deep(.polycss-mesh [data-facename="right"]),
+.scene :deep(.polycss-mesh [data-facename="left"]) {
+  filter: brightness(0.875);
+}
+
+.scene :deep(.polycss-mesh.is-hint [data-facename]) {
+  background-color: var(--tile-hint) !important;
+  color: var(--tile-hint) !important;
+}
+
+.scene :deep(.polycss-mesh.is-hint [data-facename="top"]) {
+  background-color: var(--tile-hint-top) !important;
+  color: var(--tile-hint-top) !important;
+}
+
+.scene :deep(.polycss-mesh.is-active [data-facename]) {
+  background-color: var(--tile-active) !important;
+  color: var(--tile-active) !important;
+}
+
+.scene :deep(.polycss-mesh.is-active [data-facename="top"]) {
+  background-color: var(--tile-active-top) !important;
+  color: var(--tile-active-top) !important;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .scene
     :deep(
-      .voxcss-cube.is-selectable:not(.is-active):not(.is-hint):hover
-        .voxcss-cube-face
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename]
     ) {
-    background-color: #ffe5a8 !important;
+    background-color: var(--tile-hover) !important;
+    color: var(--tile-hover) !important;
+  }
+
+  .scene
+    :deep(
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename="top"]
+    ) {
+    background-color: var(--tile-hover-top) !important;
+    color: var(--tile-hover-top) !important;
   }
 }
 
-.scene :deep(.voxcss-cube.is-selectable .voxcss-cube-face) {
+.scene :deep(.polycss-mesh.is-selectable [data-facename]) {
   cursor: pointer;
 }
 
-.scene :deep(.voxcss-cube.is-blocked .voxcss-cube-face) {
+.scene :deep(.polycss-mesh.is-blocked [data-facename]) {
   cursor: not-allowed;
 }
 
-.scene :deep(.voxcss-cube.is-blocked) {
-  background-color: #f6ead0;
+.scene :deep(.polycss-mesh.is-blocked) {
+  background-color: var(--tile-blocked);
+  transition: background-color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
-.scene :deep(.voxcss-cube.is-blocked .voxcss-cube-face--t) {
-  opacity: 0.5;
+.scene :deep(.polycss-mesh.is-blocked [data-facename="top"]) {
+  background-color: var(--tile-blocked-top) !important;
+  color: var(--tile-blocked-top) !important;
+  opacity: var(--tile-blocked-top-opacity);
+}
+
+.scene :deep(.polycss-mesh.is-blocked [data-facename="top"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--tile-disabled-art-cover);
+  opacity: var(--tile-disabled-art-cover-opacity);
+  pointer-events: none;
+  z-index: 1;
+  transition: background-color var(--theme-transition-duration)
+      var(--theme-transition-easing),
+    opacity var(--theme-transition-duration) var(--theme-transition-easing);
 }
 
 .sidebar {
@@ -225,6 +388,8 @@
   font-size: var(--ui-font-size);
   line-height: var(--ui-line-height);
   color: var(--ui-color);
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .btn-github {
@@ -233,12 +398,20 @@
   right: 0;
   z-index: 30;
   line-height: 0;
-  color: #104d2b;
+  color: var(--github-corner-color);
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .btn-github svg {
   display: block;
   fill: currentColor;
+}
+
+.github-corner-bg {
+  fill: var(--github-corner-bg);
+  transition: fill var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .btn-github .octo-arm {
@@ -285,6 +458,8 @@
 
 .move-separator {
   color: var(--ui-color-muted);
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .zoom-dock {
@@ -298,6 +473,8 @@
   font-family: var(--ui-font-family);
   font-size: var(--ui-font-size);
   line-height: var(--ui-line-height);
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .dock-row {
@@ -327,6 +504,8 @@
   height: 2px;
   border-radius: 999px;
   background: var(--ui-track);
+  transition: background-color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .zoom-slider::-webkit-slider-thumb {
@@ -338,6 +517,9 @@
   margin-top: -4px;
   border: 1px solid var(--ui-thumb-border);
   background: var(--ui-thumb);
+  transition: background-color var(--theme-transition-duration)
+      var(--theme-transition-easing),
+    border-color var(--theme-transition-duration) var(--theme-transition-easing);
 }
 
 .zoom-slider:hover::-webkit-slider-runnable-track {
@@ -363,12 +545,16 @@
   border: 0;
   border-radius: 999px;
   background: var(--ui-track);
+  transition: background-color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .zoom-slider::-moz-range-progress {
   height: 2px;
   border-radius: 999px;
   background: var(--ui-track-active);
+  transition: background-color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .zoom-slider::-moz-range-thumb {
@@ -377,6 +563,9 @@
   border-radius: 50%;
   border: 1px solid var(--ui-thumb-border);
   background: var(--ui-thumb);
+  transition: background-color var(--theme-transition-duration)
+      var(--theme-transition-easing),
+    border-color var(--theme-transition-duration) var(--theme-transition-easing);
 }
 
 .zoom-slider:hover::-moz-range-track {
@@ -399,6 +588,8 @@
   align-items: center;
   color: var(--ui-color-muted);
   cursor: pointer;
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .view-option:hover {
@@ -428,6 +619,8 @@
 .view-separator {
   margin: 0;
   color: var(--ui-color-muted);
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
 }
 
 .chip strong {
@@ -455,10 +648,38 @@
   justify-items: center;
   gap: var(--ui-gap-s);
   pointer-events: none;
-  color: #f7e6b2;
+  color: var(--win-overlay-color);
   font-family: var(--ui-font-family);
   font-size: 14px;
   text-align: center;
+  transition: color var(--theme-transition-duration)
+    var(--theme-transition-easing);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(::view-transition-old(root)),
+  :global(::view-transition-new(root)) {
+    animation-duration: 1ms;
+  }
+
+  .app,
+  .app::before,
+  .chip--button,
+  .logo-version,
+  .sidebar,
+  .btn-github,
+  .github-corner-bg,
+  .zoom-dock,
+  .move-separator,
+  .view-option,
+  .view-separator,
+  .win-overlay,
+  .scene :deep(.polycss-mesh),
+  .scene :deep(.polycss-mesh [data-facename]),
+  .scene :deep(.polycss-mesh.is-blocked),
+  .scene :deep(.polycss-mesh.is-blocked [data-facename="top"])::after {
+    transition-duration: 1ms !important;
+  }
 }
 
 .win-emoji {

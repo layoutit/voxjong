@@ -15,19 +15,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeDegrees(value: number): number {
-  const normalized = value % 360;
-  return normalized < 0 ? normalized + 360 : normalized;
-}
-
-function getWallViewSignature(nextRotX: number, nextRotY: number): string {
-  const topHalf = nextRotX >= 90 ? 1 : 0;
-  const normalizedY = normalizeDegrees(nextRotY);
-  const yawQuadrant =
-    normalizedY < 90 ? 0 : normalizedY < 180 ? 1 : normalizedY < 270 ? 2 : 3;
-  return `${topHalf}:${yawQuadrant}`;
-}
-
 function viewportShortSide(): number {
   if (typeof window === "undefined") {
     return 1024;
@@ -64,7 +51,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
   const zoomMaxCurrent = ref(zoomMaxDesktop);
   const viewMode = ref<ViewMode>("isometric");
   const pinchDistance = ref<number | null>(null);
-  const wallViewSignature = ref(getWallViewSignature(rotX.value, rotY.value));
   let viewportRafId: number | null = null;
 
   function clampZoom(value: number): number {
@@ -209,15 +195,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     rotY.value = clampRotY(rotY.value);
   }
 
-  function consumeWallViewChange(): boolean {
-    const nextSignature = getWallViewSignature(rotX.value, rotY.value);
-    if (nextSignature === wallViewSignature.value) {
-      return false;
-    }
-    wallViewSignature.value = nextSignature;
-    return true;
-  }
-
   onMounted(() => {
     updateViewportZoomBounds();
     zoom.value = clampZoom(computeViewportDefaultZoom());
@@ -283,6 +260,5 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     onTouchEnd,
     resetGestureState,
     clampCurrentView,
-    consumeWallViewChange,
   };
 }

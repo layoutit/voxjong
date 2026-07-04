@@ -96,15 +96,35 @@ export function shuffle<T>(list: T[]): T[] {
   return list;
 }
 
+const tileGridSpan = 2;
+const halfTileOffset = 1;
+
+function addTile(
+  target: TurtleCoord[],
+  x: number,
+  y: number,
+  z: number,
+  offsetX = 0,
+  offsetY = 0
+): void {
+  target.push({
+    x: x * tileGridSpan + offsetX,
+    y: y * tileGridSpan + offsetY,
+    z,
+  });
+}
+
 function createRow(
   target: TurtleCoord[],
   xStart: number,
   xEnd: number,
   y: number,
-  z: number
+  z: number,
+  offsetX = 0,
+  offsetY = 0
 ): void {
   for (let x = xStart; x <= xEnd; x += 1) {
-    target.push({ x, y, z });
+    addTile(target, x, y, z, offsetX, offsetY);
   }
 }
 
@@ -114,10 +134,12 @@ function createRect(
   yStart: number,
   xEnd: number,
   yEnd: number,
-  z: number
+  z: number,
+  offsetX = 0,
+  offsetY = 0
 ): void {
   for (let y = yStart; y <= yEnd; y += 1) {
-    createRow(target, xStart, xEnd, y, z);
+    createRow(target, xStart, xEnd, y, z, offsetX, offsetY);
   }
 }
 
@@ -131,13 +153,13 @@ export function turtleLayout(): TurtleCoord[] {
   createRow(coords, 2, 11, 5, 0);
   createRow(coords, 3, 10, 6, 0);
   createRow(coords, 1, 12, 7, 0);
-  coords.push({ x: 0, y: 4, z: 0 });
-  createRow(coords, 13, 14, 4, 0);
+  addTile(coords, 0, 3, 0, 0, halfTileOffset);
+  createRow(coords, 13, 14, 3, 0, 0, halfTileOffset);
 
   createRect(coords, 4, 1, 9, 6, 1);
   createRect(coords, 5, 2, 8, 5, 2);
   createRect(coords, 6, 3, 7, 4, 3);
-  coords.push({ x: 7, y: 4, z: 4 });
+  addTile(coords, 6, 3, 4, halfTileOffset, halfTileOffset);
 
   return coords;
 }
@@ -150,19 +172,19 @@ if (turtleCoords.length !== 144) {
 }
 
 export const turtleCells: TileBounds[] = turtleCoords.map((coord, index) => {
-  const gridX = coord.x + 1;
-  const gridY = coord.y + 1;
+  const gridX = coord.x;
+  const gridY = coord.y;
   return {
     id: index,
-    x: coord.x + 1,
-    y: coord.y + 1,
+    x: coord.x,
+    y: coord.y,
     z: coord.z,
-    x2: coord.x + 2,
-    y2: coord.y + 2,
+    x2: coord.x + tileGridSpan,
+    y2: coord.y + tileGridSpan,
     gridX,
     gridY,
-    gridX2: gridX + 1,
-    gridY2: gridY + 1,
+    gridX2: gridX + tileGridSpan,
+    gridY2: gridY + tileGridSpan,
   };
 });
 

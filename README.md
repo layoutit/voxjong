@@ -1,9 +1,9 @@
 # VoxJong
 
 VoxJong is a browser-based 3D CSS Mahjong Solitaire game that renders the board
-as real HTML/CSS 3D geometry through [VoxCSS](https://github.com/LayoutitStudio/voxcss),
+as real HTML/CSS 3D geometry through [PolyCSS](https://github.com/LayoutitStudio/polycss),
 without a WebGL or canvas renderer. The game generates a solvable turtle layout
-in TypeScript, projects the active Mahjong tiles into textured CSS cubes, and
+in TypeScript, projects the active Mahjong tiles into textured CSS meshes, and
 ships as a static Nuxt app.
 
 Play the live version: [voxjong.com](https://voxjong.com)
@@ -32,8 +32,8 @@ npm run audit
 
 ## How It Works
 
-VoxJong uses VoxCSS for DOM-based 3D rendering. Each Mahjong tile becomes one or
-more real DOM elements positioned in 3D with CSS transforms and textured with
+VoxJong uses PolyCSS for DOM-based 3D rendering. Each Mahjong tile becomes one
+real DOM-backed mesh positioned in 3D with CSS transforms and textured with
 the bundled tile PNGs, instead of being drawn into a canvas.
 
 `src/game/mahjong.ts` owns the board model: turtle layout coordinates, solvable
@@ -42,7 +42,7 @@ flower and season groups.
 
 `src/composables/useMahjongSession.ts` owns the playable session state: active
 tiles, selection, hints, timer, undo, redo, and new-game resets. `src/render`
-then maps that game state into VoxCSS scene data for the runtime in
+then maps that game state into PolyCSS mesh data for the runtime in
 `src/app.vue`.
 
 ## Build and Runtime

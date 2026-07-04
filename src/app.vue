@@ -1,25 +1,49 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
-  createCamera,
-  renderScene,
-  type HeadlessCameraHandle,
-  type HeadlessRenderHandle,
-} from "@layoutit/voxcss";
+  createPolyPerspectiveCamera,
+  createPolyScene,
+  type ParseResult,
+  type PolyMeshHandle,
+  type PolyPerspectiveCameraHandle,
+  type PolySceneHandle,
+} from "@layoutit/polycss";
 import {
   logoUrl,
   socialCardUrl,
-  tileTextures,
+  tileTextureSets,
 } from "./assets/voxjongAssets";
 import { useMahjongSession } from "./composables/useMahjongSession";
 import { useVoxjongSeo } from "./composables/useVoxjongSeo";
 import { useVoxjongView } from "./composables/useVoxjongView";
 import type { GameTile } from "./game/mahjong";
-import { createSceneState, createTileVoxels } from "./render/voxels";
+import {
+  createTileMeshSpecs,
+  tilePalettes,
+  type TileMeshSpec,
+  type TilePolygonData,
+} from "./render/voxels";
 
-useVoxjongSeo(socialCardUrl);
+type ThemeName = "light" | "dark";
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (
+    updateCallback: () => void | Promise<void>
+  ) => { finished: Promise<void>; skipTransition: () => void };
+};
 
 const clickMoveTolerance = 11;
+const polyCameraZoomScale = 50;
+const polySceneDepthOffset = 50;
+const themeStorageKey = "voxjong-theme";
+const runtimeConfig = useRuntimeConfig() as {
+  public: {
+    voxjongVersion?: unknown;
+  };
+};
+const themeMetaColors = {
+  light: "#165930",
+  dark: "#07110e",
+} as const satisfies Record<ThemeName, string>;
 const pointerStart = ref<{
   id: number;
   x: number;
@@ -27,22 +51,44 @@ const pointerStart = ref<{
   lastX: number;
   lastY: number;
   tileId: number | null;
-  cube: HTMLElement | null;
+  mesh: HTMLElement | null;
 } | null>(null);
 const sceneRoot = ref<HTMLElement | null>(null);
 const sceneVersion = ref(0);
-let selectedCubeEls: HTMLElement[] = [];
-let hintedCubeEls: HTMLElement[] = [];
+let selectedTileEls: HTMLElement[] = [];
+let hintedTileEls: HTMLElement[] = [];
 let refreshRafId: number | null = null;
-let voxcssCameraHandle: HeadlessCameraHandle | null = null;
-let voxcssRenderHandle: HeadlessRenderHandle | null = null;
-let voxcssCameraElement: HTMLElement | null = null;
+let polyCameraHandle: PolyPerspectiveCameraHandle | null = null;
+let polySceneHandle: PolySceneHandle | null = null;
+const polyTileMeshHandles = new Map<number, PolyMeshHandle>();
+let systemThemeQuery: MediaQueryList | null = null;
+let tileTextureObserver: MutationObserver | null = null;
+let tileTextureRefreshRafId: number | null = null;
+
+const themePreference = ref<ThemeName | "system">("system");
+const resolvedTheme = ref<ThemeName>("light");
+const isDarkTheme = computed(() => resolvedTheme.value === "dark");
+const themeToggleLabel = computed(() =>
+  isDarkTheme.value ? "Light Mode" : "Dark Mode"
+);
+const themeToggleAriaLabel = computed(() =>
+  isDarkTheme.value ? "Switch to light mode" : "Switch to dark mode"
+);
+const themeMetaColor = computed(() => themeMetaColors[resolvedTheme.value]);
+const tilePalette = computed(() => tilePalettes[resolvedTheme.value]);
+const tileTextureMap = computed(() => tileTextureSets[resolvedTheme.value]);
+const voxjongVersionLabel = computed(() => {
+  const version = runtimeConfig.public.voxjongVersion;
+  return typeof version === "string" && version.trim()
+    ? `v${version}`
+    : "v0.0";
+});
+
+useVoxjongSeo(socialCardUrl, { themeColor: themeMetaColor });
 
 const {
   rotX,
   rotY,
-  pan,
-  tilt,
   zoom,
   zoomMin,
   zoomMaxCurrent,
@@ -56,8 +102,7 @@ const {
   onTouchEnd,
   resetGestureState,
   clampCurrentView,
-  consumeWallViewChange,
-} = useVoxjongView(scheduleCubeVisualRefresh);
+} = useVoxjongView(scheduleTileVisualRefresh);
 
 const {
   tiles,
@@ -82,115 +127,114 @@ const {
   resetGame,
 } = useMahjongSession();
 
+function getSystemTheme(): ThemeName {
+  return systemThemeQuery?.matches ? "dark" : "light";
+}
+
+function applyThemePreference(preference: ThemeName | "system"): void {
+  themePreference.value = preference;
+  resolvedTheme.value = preference === "system" ? getSystemTheme() : preference;
+}
+
+function readStoredThemePreference(): ThemeName | null {
+  try {
+    const stored = window.localStorage.getItem(themeStorageKey);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistThemePreference(preference: ThemeName): void {
+  try {
+    window.localStorage.setItem(themeStorageKey, preference);
+  } catch {
+    return;
+  }
+}
+
+function syncSystemTheme(): void {
+  if (themePreference.value === "system") {
+    resolvedTheme.value = getSystemTheme();
+  }
+}
+
+async function applyThemePreferenceAndWait(
+  preference: ThemeName | "system"
+): Promise<void> {
+  applyThemePreference(preference);
+  await nextTick();
+}
+
+function transitionThemePreference(preference: ThemeName): void {
+  const doc = document as ViewTransitionDocument;
+  const reduceMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)"
+  ).matches;
+
+  if (reduceMotion || typeof doc.startViewTransition !== "function") {
+    applyThemePreference(preference);
+    return;
+  }
+
+  doc.startViewTransition(() => applyThemePreferenceAndWait(preference));
+}
+
+function toggleTheme(): void {
+  const nextTheme = resolvedTheme.value === "dark" ? "light" : "dark";
+  transitionThemePreference(nextTheme);
+  persistThemePreference(nextTheme);
+}
+
 function undoMove(): void {
   if (!undoGameMove()) {
     return;
   }
-  clearSelectedCubeVisual();
-  clearHintCubeVisual();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
   sceneVersion.value += 1;
-  scheduleCubeVisualRefresh();
+  scheduleTileVisualRefresh();
 }
 
 function redoMove(): void {
   if (!redoGameMove()) {
     return;
   }
-  clearSelectedCubeVisual();
-  clearHintCubeVisual();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
   sceneVersion.value += 1;
-  scheduleCubeVisualRefresh();
+  scheduleTileVisualRefresh();
 }
 
-function parseGridLine(value: string | undefined): number | null {
+function parseTileId(value: string | undefined): number | null {
   if (!value) {
     return null;
   }
-  const parsed = Number.parseInt(value.trim(), 10);
-  return Number.isFinite(parsed) ? parsed : null;
+  const tileId = Number.parseInt(value, 10);
+  return Number.isFinite(tileId) ? tileId : null;
 }
 
-function parseGridArea(
-  value: string
-): { x: number; y: number; x2: number; y2: number } | null {
-  const [xText, yText, x2Text, y2Text] = value.split("/");
-  const x = parseGridLine(xText);
-  const y = parseGridLine(yText);
-  const x2 = parseGridLine(x2Text);
-  const y2 = parseGridLine(y2Text);
-  if (x === null || y === null || x2 === null || y2 === null) {
-    return null;
-  }
-  return { x, y, x2, y2 };
-}
-
-function resolveTileFromGridArea(target: EventTarget | null): GameTile | null {
+function resolveMeshElement(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof HTMLElement)) {
     return null;
   }
-
-  const cube = target.closest(".voxcss-cube") as HTMLElement | null;
-  const tileIdText = cube?.dataset.tileId;
-  if (tileIdText) {
-    const tileId = Number.parseInt(tileIdText, 10);
-    if (Number.isFinite(tileId)) {
-      const byId = activeTiles.value.find((entry) => entry.id === tileId);
-      if (byId) {
-        return byId;
-      }
-    }
+  const meshHandle = polySceneHandle?.findMeshByElement(target);
+  if (meshHandle) {
+    return meshHandle.element;
   }
+  return target.closest(".polycss-mesh") as HTMLElement | null;
+}
 
-  let node: HTMLElement | null = target;
-  while (node && node !== sceneRoot.value && !node.style.gridArea) {
-    node = node.parentElement;
-  }
-  if (!node || !node.style.gridArea) {
+function resolveTileFromMesh(mesh: HTMLElement | null): GameTile | null {
+  const tileId = parseTileId(mesh?.dataset.tileId);
+  if (tileId === null) {
     return null;
   }
+  return activeTiles.value.find((entry) => entry.id === tileId) ?? null;
+}
 
-  const parsedArea = parseGridArea(node.style.gridArea);
-  if (!parsedArea) {
-    return null;
-  }
-
-  const layer = node.closest(".voxcss-layer") as HTMLElement | null;
-  let layerZ: number | null = null;
-  if (layer && sceneRoot.value) {
-    const layers = Array.from(
-      sceneRoot.value.querySelectorAll<HTMLElement>(".voxcss-layer")
-    );
-    const index = layers.indexOf(layer);
-    if (index >= 0) {
-      layerZ = index;
-    }
-  }
-
-  const candidates = activeTiles.value.filter(
-    (tile) =>
-      (layerZ === null || tile.z === layerZ) &&
-      tile.gridX === parsedArea.x &&
-      tile.gridY === parsedArea.y &&
-      tile.gridX2 === parsedArea.x2 &&
-      tile.gridY2 === parsedArea.y2
-  );
-
-  const fallbackCandidates =
-    candidates.length > 0
-      ? candidates
-      : activeTiles.value.filter(
-          (tile) =>
-            tile.gridX === parsedArea.x &&
-            tile.gridY === parsedArea.y &&
-            tile.gridX2 === parsedArea.x2 &&
-            tile.gridY2 === parsedArea.y2
-        );
-  if (!fallbackCandidates.length) {
-    return null;
-  }
-  return (
-    [...fallbackCandidates].sort((left, right) => right.z - left.z)[0] ?? null
-  );
+function resolveTileFromTarget(target: EventTarget | null): GameTile | null {
+  return resolveTileFromMesh(resolveMeshElement(target));
 }
 
 function resolveTileFromPoint(
@@ -199,151 +243,93 @@ function resolveTileFromPoint(
 ): GameTile | null {
   const doc = sceneRoot.value?.ownerDocument ?? document;
   const target = doc.elementFromPoint(clientX, clientY);
-  return resolveTileFromGridArea(target);
+  return resolveTileFromTarget(target);
 }
 
-function resolveCubeFromPoint(
+function resolveMeshFromPoint(
   clientX: number,
   clientY: number
 ): HTMLElement | null {
   const doc = sceneRoot.value?.ownerDocument ?? document;
   const target = doc.elementFromPoint(clientX, clientY);
-  if (!(target instanceof HTMLElement)) {
-    return null;
-  }
-  return target.closest(".voxcss-cube") as HTMLElement | null;
+  return resolveMeshElement(target);
 }
 
-function clearHintCubeVisual(): void {
-  for (const cube of hintedCubeEls) {
-    cube.classList.remove("is-hint");
+function findMeshForTile(tile: GameTile): HTMLElement | null {
+  const handle = polyTileMeshHandles.get(tile.id);
+  if (handle) {
+    return handle.element;
   }
-  hintedCubeEls = [];
+  return (
+    sceneRoot.value?.querySelector<HTMLElement>(
+      `.polycss-mesh[data-tile-id="${tile.id}"]`
+    ) ?? null
+  );
+}
+
+function clearHintTileVisual(): void {
+  for (const mesh of hintedTileEls) {
+    mesh.classList.remove("is-hint");
+  }
+  hintedTileEls = [];
 }
 
 function clearHintState(): void {
   clearGameHintState();
-  clearHintCubeVisual();
+  clearHintTileVisual();
 }
 
 function clearSelectionAndHintState(): void {
   clearGameSelectionAndHintState();
-  clearSelectedCubeVisual();
-  clearHintCubeVisual();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
 }
 
-function clearSelectedCubeVisual(): void {
-  for (const cube of selectedCubeEls) {
-    cube.classList.remove("is-active");
+function clearSelectedTileVisual(): void {
+  for (const mesh of selectedTileEls) {
+    mesh.classList.remove("is-active");
   }
-  selectedCubeEls = [];
+  selectedTileEls = [];
 }
 
-function setSelectedCubeVisual(
+function setSelectedTileVisual(
   tile: GameTile | null,
-  preferredCube: HTMLElement | null = null
+  preferredMesh: HTMLElement | null = null
 ): void {
-  clearSelectedCubeVisual();
-  const cubes = tile ? findCubesForTile(tile) : [];
-  if (preferredCube && !cubes.includes(preferredCube)) {
-    cubes.unshift(preferredCube);
-  }
-  if (cubes.length === 0) {
+  clearSelectedTileVisual();
+  const mesh = preferredMesh ?? (tile ? findMeshForTile(tile) : null);
+  if (!mesh) {
     return;
   }
-  for (const cube of cubes) {
-    cube.classList.add("is-active");
-  }
-  selectedCubeEls = cubes;
+  mesh.classList.add("is-active");
+  selectedTileEls = [mesh];
 }
 
-function findCubesForTile(tile: GameTile): HTMLElement[] {
-  const root = sceneRoot.value;
-  if (!root) {
-    return [];
-  }
-  const layers = Array.from(
-    root.querySelectorAll<HTMLElement>(".voxcss-layer")
-  );
-  const layer = layers[tile.z];
-  if (!layer) {
-    return [];
-  }
-  const cubes = Array.from(layer.querySelectorAll<HTMLElement>(".voxcss-cube"));
-  return cubes.filter((cube) => {
-    const area = parseGridArea(cube.style.gridArea);
-    return (
-      area &&
-      area.x === tile.gridX &&
-      area.y === tile.gridY &&
-      area.x2 === tile.gridX2 &&
-      area.y2 === tile.gridY2
-    );
-  });
-}
-
-function syncCubeTileBindings(): void {
-  const root = sceneRoot.value;
-  if (!root) {
-    return;
-  }
-  const allCubes = Array.from(
-    root.querySelectorAll<HTMLElement>(".voxcss-cube")
-  );
-  for (const cube of allCubes) {
-    delete cube.dataset.tileId;
-  }
-
-  for (const tile of activeTiles.value) {
-    const cubes = findCubesForTile(tile);
-    if (cubes.length === 0) {
-      continue;
-    }
-    for (const cube of cubes) {
-      cube.dataset.tileId = String(tile.id);
-    }
-  }
-}
-
-function syncCubeInteractivity(): void {
-  const root = sceneRoot.value;
-  if (!root) {
-    return;
-  }
-  const allCubes = Array.from(
-    root.querySelectorAll<HTMLElement>(".voxcss-cube")
-  );
-  for (const cube of allCubes) {
-    cube.classList.remove("is-selectable", "is-blocked");
+function syncTileInteractivity(): void {
+  for (const handle of polyTileMeshHandles.values()) {
+    handle.element.classList.remove("is-selectable", "is-blocked");
   }
   for (const tile of activeTiles.value) {
-    const cubes = findCubesForTile(tile);
-    if (cubes.length === 0) {
+    const mesh = findMeshForTile(tile);
+    if (!mesh) {
       continue;
     }
     const selectable = freeTileIds.value.has(tile.id);
-    for (const cube of cubes) {
-      cube.classList.add(selectable ? "is-selectable" : "is-blocked");
-    }
+    mesh.classList.add(selectable ? "is-selectable" : "is-blocked");
   }
 }
 
 function refreshSelectionVisual(): void {
   const tile = selectedTile.value;
   if (!tile) {
-    clearSelectedCubeVisual();
+    clearSelectedTileVisual();
     return;
   }
-  const cubes = findCubesForTile(tile);
-  if (cubes.length === 0) {
-    clearSelectedCubeVisual();
-    return;
-  }
-  setSelectedCubeVisual(tile);
+  setSelectedTileVisual(tile);
 }
 
 function refreshHintVisual(): void {
-  clearHintCubeVisual();
+  clearHintTileVisual();
   if (hintedTileIds.value.length !== 2) {
     return;
   }
@@ -352,43 +338,71 @@ function refreshHintVisual(): void {
     if (!tile) {
       continue;
     }
-    const cubes = findCubesForTile(tile);
-    if (cubes.length === 0) {
+    const mesh = findMeshForTile(tile);
+    if (!mesh) {
       continue;
     }
-    for (const cube of cubes) {
-      cube.classList.add("is-hint");
-      hintedCubeEls.push(cube);
+    mesh.classList.add("is-hint");
+    hintedTileEls.push(mesh);
+  }
+}
+
+function syncDirectTileTextureStyles(): void {
+  const root = sceneRoot.value;
+  if (!root) {
+    return;
+  }
+  const topFaces = root.querySelectorAll<HTMLElement>(
+    '[data-facename="top"][data-texture-source]'
+  );
+  for (const face of topFaces) {
+    const textureSource = face.dataset.textureSource;
+    if (!textureSource) {
+      continue;
+    }
+    const textureUrl = `url("${textureSource}")`;
+    if (face.style.getPropertyValue("--tile-texture-url") !== textureUrl) {
+      face.style.setProperty("--tile-texture-url", textureUrl);
     }
   }
 }
 
-function refreshCubeVisuals(): void {
-  syncCubeTileBindings();
-  syncCubeInteractivity();
+function scheduleDirectTileTextureStylesSync(): void {
+  if (tileTextureRefreshRafId !== null) {
+    return;
+  }
+  tileTextureRefreshRafId = requestAnimationFrame(() => {
+    tileTextureRefreshRafId = null;
+    syncDirectTileTextureStyles();
+  });
+}
+
+function refreshTileVisuals(): void {
+  syncDirectTileTextureStyles();
+  syncTileInteractivity();
   refreshSelectionVisual();
   refreshHintVisual();
 }
 
-function scheduleCubeVisualRefresh(): void {
+function scheduleTileVisualRefresh(): void {
   if (refreshRafId !== null) {
     return;
   }
   refreshRafId = requestAnimationFrame(() => {
     refreshRafId = null;
-    refreshCubeVisuals();
+    refreshTileVisuals();
   });
 }
 
 function showHint(): void {
   if (!showGameHint()) {
-    clearHintCubeVisual();
+    clearHintTileVisual();
     return;
   }
   refreshHintVisual();
 }
 
-function selectTile(tile: GameTile, cube: HTMLElement | null): void {
+function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
   const selectedId = selectedTileId.value;
 
   if (hintedTileIds.value.length > 0) {
@@ -397,50 +411,49 @@ function selectTile(tile: GameTile, cube: HTMLElement | null): void {
 
   if (selectedId === tile.id) {
     selectedTileId.value = null;
-    clearSelectedCubeVisual();
-    scheduleCubeVisualRefresh();
+    clearSelectedTileVisual();
+    scheduleTileVisualRefresh();
     return;
   }
 
   const clickedIsFree = freeTileIds.value.has(tile.id);
   if (!clickedIsFree) {
-    scheduleCubeVisualRefresh();
+    scheduleTileVisualRefresh();
     return;
   }
 
   if (selectedId === null) {
     selectedTileId.value = tile.id;
-    setSelectedCubeVisual(tile, cube);
-    scheduleCubeVisualRefresh();
+    setSelectedTileVisual(tile, mesh);
+    scheduleTileVisualRefresh();
     return;
   }
 
   const selectedTile = tiles.value.find((entry) => entry.id === selectedId);
   if (!selectedTile || selectedTile.removed) {
     selectedTileId.value = tile.id;
-    setSelectedCubeVisual(tile, cube);
-    scheduleCubeVisualRefresh();
+    setSelectedTileVisual(tile, mesh);
+    scheduleTileVisualRefresh();
     return;
   }
 
   if (removePair(selectedTile.id, tile.id)) {
-    clearSelectedCubeVisual();
-    clearHintCubeVisual();
-    // Force a scene remount to avoid stale cubes lingering after pair removal.
+    clearSelectedTileVisual();
+    clearHintTileVisual();
     sceneVersion.value += 1;
-    scheduleCubeVisualRefresh();
+    scheduleTileVisualRefresh();
     return;
   }
 
   selectedTileId.value = tile.id;
-  setSelectedCubeVisual(tile, cube);
-  scheduleCubeVisualRefresh();
+  setSelectedTileVisual(tile, mesh);
+  scheduleTileVisualRefresh();
 }
 
 function onScenePointerDown(event: PointerEvent): void {
   const target = event.target instanceof HTMLElement ? event.target : null;
-  const cube = target?.closest(".voxcss-cube") as HTMLElement | null;
-  const downTile = cube ? resolveTileFromGridArea(cube) : null;
+  const mesh = resolveMeshElement(target);
+  const downTile = resolveTileFromMesh(mesh);
   pointerStart.value = {
     id: event.pointerId,
     x: event.clientX,
@@ -448,7 +461,7 @@ function onScenePointerDown(event: PointerEvent): void {
     lastX: event.clientX,
     lastY: event.clientY,
     tileId: downTile?.id ?? null,
-    cube: cube ?? null,
+    mesh: mesh ?? null,
   };
 }
 
@@ -478,7 +491,7 @@ function onScenePointerUp(event: PointerEvent): void {
 
   const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
   if (moved > clickMoveTolerance) {
-    scheduleCubeVisualRefresh();
+    scheduleTileVisualRefresh();
     return;
   }
 
@@ -490,100 +503,201 @@ function onScenePointerUp(event: PointerEvent): void {
   const tile = pointTile ?? startTile;
   if (!tile) {
     clearSelectionAndHintState();
-    scheduleCubeVisualRefresh();
+    scheduleTileVisualRefresh();
     return;
   }
-  const cube = start.cube ?? resolveCubeFromPoint(event.clientX, event.clientY);
-  selectTile(tile, cube);
-  scheduleCubeVisualRefresh();
+  const mesh = start.mesh ?? resolveMeshFromPoint(event.clientX, event.clientY);
+  selectTile(tile, mesh);
+  scheduleTileVisualRefresh();
 }
 
 function onScenePointerCancel(): void {
   pointerStart.value = null;
 }
 
-function syncVoxcssCamera(): void {
-  if (!voxcssCameraHandle) {
-    return;
-  }
-  voxcssCameraHandle.update({
-    zoom: zoom.value,
-    pan: pan.value,
-    tilt: tilt.value,
-    rotX: rotX.value,
-    rotY: rotY.value,
-    interactive: false,
-    animate: false,
-    perspective: 8000,
-  });
+function createTileParseResult(tileMesh: TileMeshSpec): ParseResult {
+  return {
+    polygons: tileMesh.polygons,
+    objectUrls: [],
+    dispose: () => {},
+    warnings: [],
+    metadata: {
+      meshes: [`tile-${tileMesh.tileId}`],
+    },
+  };
 }
 
-function destroyVoxcssScene(): void {
-  if (voxcssRenderHandle) {
-    voxcssRenderHandle.destroy();
-    voxcssRenderHandle = null;
-    voxcssCameraHandle = null;
-  } else if (voxcssCameraHandle) {
-    voxcssCameraHandle.destroy();
-    voxcssCameraHandle = null;
+function syncPolyMeshMetadata(
+  handle: PolyMeshHandle,
+  tileMesh: TileMeshSpec
+): void {
+  handle.element.dataset.tileId = String(tileMesh.tileId);
+  handle.element.dataset.tileCode = tileMesh.tileCode;
+  handle.element.dataset.selectable = String(tileMesh.selectable);
+
+  for (const polygon of tileMesh.polygons) {
+    const data = polygon.data as TilePolygonData | undefined;
+    if (!data) {
+      continue;
+    }
+    const faces = handle.element.querySelectorAll<HTMLElement>(
+      `[data-facename="${data.faceName}"]`
+    );
+    for (const face of faces) {
+      face.dataset.tileId = String(data.tileId);
+      face.dataset.tileCode = data.tileCode;
+      face.dataset.selectable = String(data.selectable);
+      face.dataset.blocked = String(data.blocked);
+      face.dataset.textureSet = data.textureSet;
+      face.dataset.textureSource = data.textureSource;
+      face.dataset.textureSourcePath = data.textureSourcePath;
+      face.style.setProperty(
+        "--tile-texture-url",
+        data.faceName === "top" ? `url("${data.textureSource}")` : "none"
+      );
+    }
+  }
+}
+
+function syncPolyCamera(): void {
+  if (!polyCameraHandle || !polySceneHandle) {
+    return;
+  }
+  polyCameraHandle.update({
+    zoom: zoom.value * polyCameraZoomScale,
+    rotX: rotX.value,
+    rotY: rotY.value,
+  });
+  polySceneHandle.applyCamera();
+  syncPolySceneDepthOffset();
+}
+
+function syncPolySceneDepthOffset(): void {
+  const sceneElement = polySceneHandle?.sceneElement;
+  if (!sceneElement) {
+    return;
+  }
+  const depthOffsetPattern = new RegExp(
+    `\\s*translateY\\(${polySceneDepthOffset}px\\)`,
+    "g"
+  );
+  const transform = sceneElement.style.transform
+    .replace(depthOffsetPattern, "")
+    .trim();
+  sceneElement.style.transform = transform.replace(
+    /^(scale\([^)]+\))/,
+    `$1 translateY(${polySceneDepthOffset}px)`
+  );
+}
+
+function syncPolyTileMeshes(nextTileMeshes = tileMeshes.value): void {
+  if (!polySceneHandle) {
+    return;
   }
 
-  if (voxcssCameraElement?.parentElement) {
-    voxcssCameraElement.parentElement.removeChild(voxcssCameraElement);
+  const nextTileIds = new Set(nextTileMeshes.map((tile) => tile.tileId));
+  for (const [tileId, handle] of polyTileMeshHandles) {
+    if (!nextTileIds.has(tileId)) {
+      handle.remove();
+      polyTileMeshHandles.delete(tileId);
+    }
   }
-  voxcssCameraElement = null;
+
+  for (const tileMesh of nextTileMeshes) {
+    const existingHandle = polyTileMeshHandles.get(tileMesh.tileId);
+    if (existingHandle) {
+      existingHandle.setPolygons(tileMesh.polygons, {
+        merge: false,
+        stableDom: true,
+        recomputeAutoCenter: false,
+      });
+      syncPolyMeshMetadata(existingHandle, tileMesh);
+      continue;
+    }
+
+    const handle = polySceneHandle.add(createTileParseResult(tileMesh), {
+      id: `tile-${tileMesh.tileId}`,
+      merge: false,
+      stableDom: true,
+    });
+    syncPolyMeshMetadata(handle, tileMesh);
+    polyTileMeshHandles.set(tileMesh.tileId, handle);
+  }
+}
+
+function destroyPolyScene(): void {
+  polyTileMeshHandles.clear();
+  tileTextureObserver?.disconnect();
+  tileTextureObserver = null;
+  polySceneHandle?.destroy();
+  polySceneHandle = null;
+  polyCameraHandle = null;
 
   const root = sceneRoot.value;
   if (root) {
     const staleCameras = Array.from(
-      root.querySelectorAll<HTMLElement>(".voxcss-camera")
+      root.querySelectorAll<HTMLElement>(".polycss-camera")
     );
     for (const cameraNode of staleCameras) {
       cameraNode.remove();
     }
   }
+  if (tileTextureRefreshRafId !== null) {
+    cancelAnimationFrame(tileTextureRefreshRafId);
+    tileTextureRefreshRafId = null;
+  }
 }
 
-function mountVoxcssScene(): void {
+function mountPolyScene(): void {
   const root = sceneRoot.value;
   if (!root) {
     return;
   }
 
-  destroyVoxcssScene();
-  const doc = root.ownerDocument ?? document;
-  voxcssCameraElement = doc.createElement("div");
-  voxcssCameraHandle = createCamera({
-    element: voxcssCameraElement,
-    zoom: zoom.value,
-    pan: pan.value,
-    tilt: tilt.value,
+  destroyPolyScene();
+  polyCameraHandle = createPolyPerspectiveCamera({
+    zoom: zoom.value * polyCameraZoomScale,
     rotX: rotX.value,
     rotY: rotY.value,
-    interactive: false,
-    animate: false,
     perspective: 8000,
   });
-  voxcssRenderHandle = renderScene({
-    element: root,
-    camera: voxcssCameraHandle,
-    scene: createSceneState(voxels.value),
+  polySceneHandle = createPolyScene(root, {
+    camera: polyCameraHandle,
+    autoCenter: true,
+    textureBackend: "image",
+    textureImageRendering: "auto",
+    textureLeafSizing: "local",
+    seamBleed: 0.1,
   });
+  tileTextureObserver = new MutationObserver(scheduleDirectTileTextureStylesSync);
+  tileTextureObserver.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["data-texture-source", "style"],
+  });
+  syncPolyTileMeshes();
+  syncPolyCamera();
+  scheduleDirectTileTextureStylesSync();
 }
 
 onMounted(() => {
+  systemThemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  applyThemePreference(readStoredThemePreference() ?? "system");
+  systemThemeQuery.addEventListener("change", syncSystemTheme);
   requestAnimationFrame(() => {
     clampCurrentView();
-    mountVoxcssScene();
-    syncVoxcssCamera();
-    refreshCubeVisuals();
+    mountPolyScene();
+    refreshTileVisuals();
   });
 });
 
 onBeforeUnmount(() => {
-  destroyVoxcssScene();
-  clearSelectedCubeVisual();
-  clearHintCubeVisual();
+  systemThemeQuery?.removeEventListener("change", syncSystemTheme);
+  systemThemeQuery = null;
+  destroyPolyScene();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
   if (refreshRafId !== null) {
     cancelAnimationFrame(refreshRafId);
     refreshRafId = null;
@@ -595,35 +709,34 @@ function newGame(): void {
   resetGame();
   resetGestureState();
   pointerStart.value = null;
-  clearSelectedCubeVisual();
-  clearHintCubeVisual();
-  scheduleCubeVisualRefresh();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
+  scheduleTileVisualRefresh();
 }
 
-const voxels = computed(() => {
-  return createTileVoxels(activeTiles.value, freeTileIds.value, tileTextures);
+const tileMeshes = computed(() => {
+  return createTileMeshSpecs(
+    activeTiles.value,
+    freeTileIds.value,
+    tileTextureMap.value,
+    tilePalette.value
+  );
 });
 
 watch(
-  [zoom, pan, tilt, rotX, rotY],
+  [zoom, rotX, rotY],
   () => {
-    if (consumeWallViewChange()) {
-      mountVoxcssScene();
-    }
-    syncVoxcssCamera();
-    scheduleCubeVisualRefresh();
+    syncPolyCamera();
+    scheduleTileVisualRefresh();
   },
   { flush: "post" }
 );
 
 watch(
-  voxels,
-  (nextVoxels) => {
-    if (!voxcssRenderHandle) {
-      return;
-    }
-    voxcssRenderHandle.setScene(createSceneState(nextVoxels));
-    scheduleCubeVisualRefresh();
+  tileMeshes,
+  (nextTileMeshes) => {
+    syncPolyTileMeshes(nextTileMeshes);
+    scheduleTileVisualRefresh();
   },
   { flush: "post" }
 );
@@ -631,15 +744,15 @@ watch(
 watch(
   sceneVersion,
   () => {
-    mountVoxcssScene();
-    scheduleCubeVisualRefresh();
+    syncPolyTileMeshes();
+    scheduleTileVisualRefresh();
   },
   { flush: "post" }
 );
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :data-theme="resolvedTheme">
     <section
       ref="sceneRoot"
       class="scene"
@@ -659,7 +772,7 @@ watch(
         <h1 class="sr-only">VoxJong 3D Mahjong Solitaire</h1>
         <div class="brand-mark">
           <img class="logo" :src="logoUrl" alt="VoxJong" />
-          <span class="logo-version">v0.2</span>
+          <span class="logo-version">{{ voxjongVersionLabel }}</span>
         </div>
       </div>
 
@@ -676,6 +789,24 @@ watch(
         >
           <span class="chip-button-label">Hints</span>
           <span class="chip-button-suit" aria-hidden="true">&diamondsuit;</span>
+        </button>
+        <button
+          type="button"
+          class="chip chip--button chip--theme"
+          :aria-label="themeToggleAriaLabel"
+          :aria-pressed="isDarkTheme"
+          @click="toggleTheme"
+        >
+          <span class="chip-button-label">{{ themeToggleLabel }}</span>
+          <span
+            v-if="isDarkTheme"
+            class="chip-button-suit"
+            aria-hidden="true"
+            >&clubs;</span
+          >
+          <span v-else class="chip-button-suit" aria-hidden="true"
+            >&spades;</span
+          >
         </button>
         <div class="move-controls">
           <button
@@ -771,7 +902,10 @@ watch(
         height="55"
         viewBox="0 0 250 250"
       >
-        <path d="M0 0l115 115h15l12 27 108 108V0z" fill="#fff" />
+        <path
+          class="github-corner-bg"
+          d="M0 0l115 115h15l12 27 108 108V0z"
+        />
         <path
           class="octo-arm"
           d="M128 109c-15-9-9-19-9-19 3-7 2-11 2-11-1-7 3-2 3-2 4 5 2 11 2 11-3 10 5 15 9 16"

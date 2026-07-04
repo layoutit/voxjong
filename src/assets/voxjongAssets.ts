@@ -8,12 +8,24 @@ const imageModules = import.meta.glob("./*.png", {
   import: "default",
 }) as Record<string, string>;
 
-const loadedTextures = Object.fromEntries(
-  Object.entries(imageModules).map(([path, url]) => [
-    path.split("/").pop()?.replace(".png", "") ?? path,
-    url,
-  ])
-) as Record<string, string>;
+const darkImageModules = import.meta.glob("./dark/*.png", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+function createTextureMap(
+  modules: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(modules).map(([path, url]) => [
+      path.split("/").pop()?.replace(".png", "") ?? path,
+      url,
+    ])
+  );
+}
+
+const loadedTextures = createTextureMap(imageModules);
+const loadedDarkTextures = createTextureMap(darkImageModules);
 
 const missingTileNames = requiredTileNames.filter(
   (name) => !loadedTextures[name]
@@ -24,6 +36,16 @@ if (missingTileNames.length > 0) {
 
 export const tileTextures = loadedTextures as Record<TileCode, string> &
   Record<string, string>;
+
+export const darkTileTextures = {
+  ...tileTextures,
+  ...loadedDarkTextures,
+} as Record<TileCode, string> & Record<string, string>;
+
+export const tileTextureSets = {
+  light: tileTextures,
+  dark: darkTileTextures,
+} as const;
 
 export const logoUrl = imageModules["./voxjong-logo.png"];
 export const socialCardUrl = imageModules["./voxjong-social.png"];

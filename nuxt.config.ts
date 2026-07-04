@@ -1,3 +1,17 @@
+import { execSync } from "node:child_process"
+
+function voxjongVersion(): string {
+  try {
+    const commitCount = execSync("git rev-list --count HEAD", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim()
+    return `0.${commitCount}`
+  } catch {
+    return "0.0"
+  }
+}
+
 export default defineNuxtConfig({
   ssr: true,
   srcDir: "src",
@@ -19,15 +33,16 @@ export default defineNuxtConfig({
       ],
       meta: [
         {
-          name: "theme-color",
-          content: "#165930"
+          name: "color-scheme",
+          content: "light dark"
         }
       ]
     }
   },
   runtimeConfig: {
     public: {
-      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || "https://voxjong.com"
+      siteUrl: process.env.NUXT_PUBLIC_SITE_URL || "https://voxjong.com",
+      voxjongVersion: voxjongVersion()
     }
   },
   devtools: {
