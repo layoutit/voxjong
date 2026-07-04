@@ -81,13 +81,6 @@ describe("PolyCSS tile rendering", () => {
         [0, 1.25, 2],
       ],
       color: "#f6ead0",
-      texture: "/man2.png",
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
       data: {
         tileId: 1,
         tileCode: "Man2",
@@ -103,6 +96,8 @@ describe("PolyCSS tile rendering", () => {
         z: 3,
       },
     });
+    expect(top.texture).toBeUndefined();
+    expect(top.uvs).toBeUndefined();
 
     expect(polygonForFace(mesh?.polygons ?? [], "right")).toMatchObject({
       vertices: [
@@ -331,7 +326,6 @@ describe("PolyCSS tile rendering", () => {
     });
     expect(polygonForFace(mesh?.polygons ?? [], "top")).toMatchObject({
       color: "#f6ead0",
-      texture: "/man1.png",
       data: {
         tileId: 2,
         tileCode: "Man3",
@@ -340,6 +334,7 @@ describe("PolyCSS tile rendering", () => {
         blocked: true,
       },
     });
+    expect(polygonForFace(mesh?.polygons ?? [], "top").texture).toBeUndefined();
     expect(polygonForFace(mesh?.polygons ?? [], "front")).toMatchObject({
       color: "#e1d2af",
       data: {

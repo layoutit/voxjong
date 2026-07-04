@@ -70,12 +70,6 @@ export type TileMeshSpec = {
   polygons: Polygon[];
 };
 
-const tileTopUvs: NonNullable<Polygon["uvs"]> = [
-  [0, 0],
-  [1, 0],
-  [1, 1],
-  [0, 1],
-];
 const tileHeight = 0.5;
 const gridUnitWorldScale = 0.5;
 
@@ -403,17 +397,6 @@ export function createTileMeshSpecs(
     polygons.push(
       ...polygonsForFace(bounds, "top", colors.side, {
         color: colors.top,
-        texture,
-        material: {
-          texture,
-          key: `${palette.textureSet}:${tile.code}`,
-          presentation: {
-            backend: "image",
-            imageRendering: "auto",
-            lighting: "source",
-          },
-        },
-        uvs: tileTopUvs,
         data: faceData(
           tile,
           "top",

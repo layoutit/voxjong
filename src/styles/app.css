@@ -258,6 +258,7 @@
 }
 
 .scene :deep(.polycss-mesh [data-facename="top"]) {
+  --tile-top-art-inset: calc(var(--polycss-atlas-width, 64px) * 0.12);
   background-color: var(--tile-top) !important;
   background-image: none !important;
   background-size: contain !important;
@@ -270,14 +271,14 @@
   filter: var(--tile-top-filter);
   image-rendering: auto !important;
   overflow: hidden;
-  padding: calc(var(--polycss-atlas-width, 50px) * 0.12);
+  padding: var(--tile-top-art-inset);
   position: relative;
 }
 
 .scene :deep(.polycss-mesh [data-facename="top"])::before {
   content: "";
   position: absolute;
-  inset: calc(var(--polycss-atlas-width, 50px) * 0.12);
+  inset: var(--tile-top-art-inset);
   background-image: var(--tile-texture-url);
   background-size: contain;
   background-repeat: no-repeat;

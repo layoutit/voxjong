@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   createPolyPerspectiveCamera,
   createPolyScene,
@@ -21,11 +21,6 @@ import {
 } from "./render/voxels";
 
 type ThemeName = "light" | "dark";
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (
-    updateCallback: () => void | Promise<void>
-  ) => { finished: Promise<void>; skipTransition: () => void };
-};
 
 const clickMoveTolerance = 11;
 const polyCameraZoomScale = 50;
@@ -150,30 +145,9 @@ function syncThemeMetaColor(color: string): void {
   meta.content = color;
 }
 
-async function applyThemePreferenceAndWait(
-  preference: ThemeName
-): Promise<void> {
-  applyThemePreference(preference);
-  await nextTick();
-}
-
-function transitionThemePreference(preference: ThemeName): void {
-  const doc = document as ViewTransitionDocument;
-  const reduceMotion = window.matchMedia(
-    "(prefers-reduced-motion: reduce)"
-  ).matches;
-
-  if (reduceMotion || typeof doc.startViewTransition !== "function") {
-    applyThemePreference(preference);
-    return;
-  }
-
-  doc.startViewTransition(() => applyThemePreferenceAndWait(preference));
-}
-
 function toggleTheme(): void {
   const nextTheme = resolvedTheme.value === "dark" ? "light" : "dark";
-  transitionThemePreference(nextTheme);
+  applyThemePreference(nextTheme);
   persistThemePreference(nextTheme);
 }
 
