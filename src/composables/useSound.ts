@@ -6,6 +6,8 @@ import combine2Url from "../assets/sounds/combine-2.wav";
 import landing1Url from "../assets/sounds/landing-1.wav";
 import landing2Url from "../assets/sounds/landing-2.wav";
 import clearUrl from "../assets/sounds/clear.wav";
+import hintUrl from "../assets/sounds/hint.wav";
+import winUrl from "../assets/sounds/win.wav";
 
 // Each interaction randomizes across a small set of variants so repeated taps
 // don't sound mechanically identical.
@@ -19,6 +21,8 @@ const selectGain = 0.35;
 const combineGain = 0.7;
 const landingGain = 0.3;
 const clearGain = 0.6;
+const hintGain = 0.55;
+const winGain = 0.7;
 
 // Length of clear.wav (chips_in_sack_short), used to time the New Game sweep.
 export const clearSoundDurationMs = 604;
@@ -94,6 +98,8 @@ export function useSound() {
       ...combineUrls,
       ...landingUrls,
       clearUrl,
+      hintUrl,
+      winUrl,
     ]) {
       void loadSound(url);
     }
@@ -171,5 +177,7 @@ export function useSound() {
     playLanding: () =>
       play(pickRandom(landingUrls), landingGain, 0.9 + Math.random() * 0.2),
     playClear: () => play(clearUrl, clearGain),
+    playHint: () => play(hintUrl, hintGain),
+    playWin: () => play(winUrl, winGain),
   };
 }

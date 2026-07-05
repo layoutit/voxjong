@@ -275,7 +275,14 @@ export function createSolvableRemovalPairs(
   throw new Error("Unable to generate a solvable turtle deal.");
 }
 
-export function createGameTiles(): GameTile[] {
+export type GameDeal = {
+  tiles: GameTile[];
+  // Tile-id pairs in an order that is guaranteed to solve the board (each pair
+  // is free and matching when reached). Used by the dev auto-solver.
+  removalOrder: Array<[number, number]>;
+};
+
+export function createGameDeal(): GameDeal {
   const removalPairs = createSolvableRemovalPairs(turtleCells);
   const codePairs = createPairBag();
   if (removalPairs.length !== codePairs.length) {
@@ -295,7 +302,7 @@ export function createGameTiles(): GameTile[] {
     codeById.set(pair[1], codes[1]);
   }
 
-  return turtleCells.map((cell) => {
+  const tiles = turtleCells.map((cell) => {
     const code = codeById.get(cell.id);
     if (!code) {
       throw new Error(`Missing generated tile code for cell ${cell.id}.`);
@@ -316,6 +323,12 @@ export function createGameTiles(): GameTile[] {
       removed: false,
     };
   });
+
+  return { tiles, removalOrder: removalPairs };
+}
+
+export function createGameTiles(): GameTile[] {
+  return createGameDeal().tiles;
 }
 
 export function overlapOnAxis(

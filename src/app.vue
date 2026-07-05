@@ -176,7 +176,20 @@ const {
   redoMove: redoGameMove,
   showHint: showGameHint,
   resetGame,
+  autoSolve,
 } = useMahjongSession();
+
+const isDevBuild = import.meta.env.DEV;
+
+function devSolve(): void {
+  if (isAssembling.value) {
+    return;
+  }
+  autoSolve(); // remove all but the final pair
+  clearSelectedTileVisual();
+  clearHintTileVisual();
+  scheduleTileVisualRefresh();
+}
 
 const {
   muted: isMuted,
@@ -188,6 +201,8 @@ const {
   playMatch: playMatchSound,
   playLanding: playLandingSound,
   playClear: playClearSound,
+  playHint: playHintSound,
+  playWin: playWinSound,
 } = useSound();
 
 const soundToggleLabel = computed(() =>
@@ -453,6 +468,7 @@ function showHint(): void {
     clearHintTileVisual();
     return;
   }
+  playHintSound();
   refreshHintVisual();
 }
 
@@ -891,6 +907,10 @@ function runClearOut(onDone: () => void): void {
     }
   }
   if (reduceMotion || meshes.length === 0) {
+    // Nothing to sweep (e.g. New Game right after a win, where every tile was
+    // removed and its mesh unmounted). Hide the board so the re-added tiles
+    // don't flash at rest before the drop-in parks them off-screen.
+    boardPreparing.value = true;
     onDone();
     return;
   }
@@ -1255,6 +1275,12 @@ watch(
   },
   { flush: "post" }
 );
+
+watch(isWon, (won) => {
+  if (won) {
+    playWinSound();
+  }
+});
 </script>
 
 <template>
@@ -1296,6 +1322,17 @@ watch(
         >
           <span class="chip-button-label">Hints</span>
           <span class="chip-button-suit" aria-hidden="true">&diamondsuit;</span>
+        </button>
+        <button
+          v-if="isDevBuild"
+          type="button"
+          class="chip chip--button"
+          :disabled="remainingTiles <= 2"
+          title="Dev: remove all but the last pair"
+          @click="devSolve"
+        >
+          <span class="chip-button-label">Solve</span>
+          <span class="chip-button-suit" aria-hidden="true">&#9889;</span>
         </button>
         <button
           type="button"

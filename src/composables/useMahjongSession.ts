@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   canPair,
-  createGameTiles,
+  createGameDeal,
   getAvailablePairs,
   getFreeTileIds,
   turtleCells,
@@ -20,7 +20,9 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 export function useMahjongSession() {
-  const tiles = ref<GameTile[]>(createGameTiles());
+  const initialDeal = createGameDeal();
+  const tiles = ref<GameTile[]>(initialDeal.tiles);
+  const removalOrder = ref<Array<[number, number]>>(initialDeal.removalOrder);
   const selectedTileId = ref<number | null>(null);
   const elapsedSeconds = ref(0);
   const hintedTileIds = ref<number[]>([]);
@@ -201,10 +203,25 @@ export function useMahjongSession() {
   }
 
   function resetGame(): void {
-    tiles.value = createGameTiles();
+    const deal = createGameDeal();
+    tiles.value = deal.tiles;
+    removalOrder.value = deal.removalOrder;
     clearMoveHistory();
     clearSelectionAndHintState();
     restartTimer();
+  }
+
+  // Dev helper: fast-forward the guaranteed-solvable removal order, stopping
+  // with `leave` tiles still on the board (default 2 = the final pair) so the
+  // victory can be triggered by a couple of real clicks.
+  function autoSolve(leave = 2): void {
+    clearSelectionAndHintState();
+    for (const [firstId, secondId] of removalOrder.value) {
+      if (remainingTiles.value <= leave) {
+        break;
+      }
+      removePair(firstId, secondId);
+    }
   }
 
   onMounted(startTimer);
@@ -232,5 +249,6 @@ export function useMahjongSession() {
     redoMove,
     showHint,
     resetGame,
+    autoSolve,
   };
 }
