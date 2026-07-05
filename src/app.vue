@@ -45,7 +45,7 @@ const introSettleLead = 250;
 const introBounceScreenPx = 9; // screen px of the little bounce on contact
 const introBounceTime = 160; // ms of the bounce settle
 const introLandingMinGap = 55; // ms min gap between landing ticks (throttle)
-const introLandingSoundTarget = 30; // max landing ticks across the intro
+const introLandingSoundMax = 30; // max landing ticks across the intro
 const introClearDuration = 380; // ms for a tile to fly off-screen
 // Sweep spans the chips-in-sack clip so the disappearance is timed to the sound.
 const introClearStagger = Math.max(80, clearSoundDurationMs - introClearDuration);
@@ -59,6 +59,10 @@ const boardPreparing = ref(false);
 let introPlans: IntroPlan[] = [];
 let introRafId: number | null = null;
 let introClearTimer: number | null = null;
+// Bumped whenever a fresh intro sequence begins (mount / New Game); a pending
+// async first-load intro checks it so it can't fire after being superseded.
+let introGeneration = 0;
+let removeGestureUnlock: (() => void) | null = null;
 const turtleGridDimensions = computeTileGridDimensions(turtleCells);
 const themeStorageKey = "voxjong-theme";
 const themeMetaColors = {
@@ -178,6 +182,7 @@ const {
   muted: isMuted,
   preload: preloadSounds,
   unlock: unlockSounds,
+  dispose: disposeSounds,
   toggleMuted: toggleSound,
   playSelect: playSelectSound,
   playMatch: playMatchSound,
@@ -187,9 +192,6 @@ const {
 
 const soundToggleLabel = computed(() =>
   isMuted.value ? "Sound Off" : "Sound On"
-);
-const soundToggleAriaLabel = computed(() =>
-  isMuted.value ? "Unmute sound" : "Mute sound"
 );
 
 function applyThemePreference(preference: ThemeName): void {
@@ -511,7 +513,6 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
 }
 
 function onScenePointerDown(event: PointerEvent): void {
-  unlockSounds();
   const target = event.target instanceof HTMLElement ? event.target : null;
   const mesh = resolveMeshElement(target);
   const downTile = resolveTileFromMesh(mesh);
@@ -803,6 +804,12 @@ function preloadTileImages(): Promise<void> {
         // immediately mid-fall, instead of blank until the browser rasterizes.
         const done = () => resolve();
         img.decode().then(done, () => {
+          // decode() can reject even when the bytes are already loaded — don't
+          // wait on onload that will never re-fire in that case.
+          if (img.complete) {
+            done();
+            return;
+          }
           img.onload = done;
           img.onerror = done;
         });
@@ -824,9 +831,10 @@ function measureAxisVector(
   test: number
 ): { dx: number; dy: number } {
   // Measure from a clean baseline: the element may already carry a transform
-  // (e.g. the off-screen sweep-out), which would poison the delta. Restore it
-  // afterwards so the caller's state is untouched.
-  const prev = el.style.transform;
+  // (e.g. the off-screen sweep-out), which would poison the delta. Restore both
+  // transform and transition afterwards so the caller's state is untouched.
+  const prevTransform = el.style.transform;
+  const prevTransition = el.style.transition;
   el.style.transition = "none";
   el.style.transform = "";
   void document.body.offsetHeight;
@@ -834,7 +842,8 @@ function measureAxisVector(
   el.style.transform = `translate${axis}(${test}px)`;
   void document.body.offsetHeight;
   const after = el.getBoundingClientRect();
-  el.style.transform = prev;
+  el.style.transform = prevTransform;
+  el.style.transition = prevTransition;
   return {
     dx: (after.left - before.left) / test,
     dy: (after.top - before.top) / test,
@@ -1000,6 +1009,9 @@ function runAssembleIntro(): void {
     });
   }
   if (plans.length === 0) {
+    // No meshes to animate — don't leave the board hidden or the clock frozen.
+    boardPreparing.value = false;
+    clockRunning.value = true;
     return;
   }
 
@@ -1066,7 +1078,7 @@ function runAssembleIntro(): void {
           plan.landed = true;
           if (
             now - lastSoundAt > introLandingMinGap &&
-            soundsPlayed < introLandingSoundTarget
+            soundsPlayed < introLandingSoundMax
           ) {
             playLandingSound();
             lastSoundAt = now;
@@ -1125,13 +1137,14 @@ function mountPolyScene(): void {
 }
 
 function unlockAudioOnFirstGesture(): void {
-  const unlock = () => {
-    unlockSounds();
+  const unlock = () => unlockSounds();
+  removeGestureUnlock = () => {
     window.removeEventListener("pointerdown", unlock);
     window.removeEventListener("keydown", unlock);
+    removeGestureUnlock = null;
   };
-  window.addEventListener("pointerdown", unlock);
-  window.addEventListener("keydown", unlock);
+  window.addEventListener("pointerdown", unlock, { once: true });
+  window.addEventListener("keydown", unlock, { once: true });
 }
 
 onMounted(() => {
@@ -1139,15 +1152,24 @@ onMounted(() => {
   preloadSounds();
   unlockAudioOnFirstGesture();
   boardPreparing.value = true; // hide the board until the first drop-in
+  const generation = ++introGeneration;
   requestAnimationFrame(() => {
     clampCurrentView();
     mountPolyScene();
     refreshTileVisuals();
-    void preloadTileImages().then(() => runAssembleIntro());
+    // Skip this first-load intro if a New Game (or unmount) superseded it while
+    // images were preloading.
+    void preloadTileImages().then(() => {
+      if (generation === introGeneration) {
+        runAssembleIntro();
+      }
+    });
   });
 });
 
 onBeforeUnmount(() => {
+  introGeneration += 1; // invalidate any pending first-load intro
+  removeGestureUnlock?.();
   destroyPolyScene();
   clearSelectedTileVisual();
   clearHintTileVisual();
@@ -1160,10 +1182,15 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(refreshRafId);
     refreshRafId = null;
   }
+  disposeSounds();
 });
 
 function newGame(): void {
-  unlockSounds();
+  // Ignore repeat clicks while a board-clear sweep is already in flight.
+  if (introClearTimer !== null) {
+    return;
+  }
+  introGeneration += 1; // supersede any pending first-load intro
   clockRunning.value = false; // freeze the clock through sweep + drop-in
   clearSelectedTileVisual();
   clearHintTileVisual();
@@ -1292,7 +1319,7 @@ watch(
           type="button"
           class="chip chip--button chip--sound"
           :class="{ 'is-muted': isMuted }"
-          :aria-label="soundToggleAriaLabel"
+          aria-label="Sound"
           :aria-pressed="!isMuted"
           @click="toggleSound"
         >

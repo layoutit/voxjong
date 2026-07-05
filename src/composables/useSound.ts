@@ -100,8 +100,13 @@ export function useSound() {
   }
 
   function unlock(): void {
+    // Don't claim the platform audio session while muted (iOS can duck other
+    // apps' audio just from a running context).
+    if (isMuted.value) {
+      return;
+    }
     const ctx = getContext();
-    if (ctx && ctx.state === "suspended") {
+    if (ctx && ctx.state !== "running") {
       void ctx.resume();
     }
   }
@@ -114,8 +119,11 @@ export function useSound() {
     if (!ctx) {
       return;
     }
-    if (ctx.state === "suspended") {
+    // Never queue on a suspended context — queued sources all fire at once when
+    // it later resumes (a loud burst). Kick a resume and drop this one.
+    if (ctx.state !== "running") {
       void ctx.resume();
+      return;
     }
     const buffer = buffers.get(url);
     if (!buffer) {
@@ -134,16 +142,28 @@ export function useSound() {
   function setMuted(muted: boolean): void {
     isMuted.value = muted;
     persistMuted(muted);
+    if (!muted) {
+      unlock(); // resume the context so the next sound plays without a gesture
+    }
   }
 
   function toggleMuted(): void {
     setMuted(!isMuted.value);
   }
 
+  function dispose(): void {
+    if (audioContext) {
+      void audioContext.close();
+      audioContext = null;
+    }
+    buffers.clear();
+  }
+
   return {
     muted: isMuted,
     preload,
     unlock,
+    dispose,
     setMuted,
     toggleMuted,
     playSelect: () => play(pickRandom(selectUrls), selectGain),

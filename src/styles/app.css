@@ -290,11 +290,9 @@
   visibility: hidden;
 }
 
-/* During the start-of-game assemble intro, reveal each tile's TOP (its symbol)
-   and its four full-span side walls so even fully-buried inner tiles fall as
-   whole boxes. Partial-span duplicate faces stay hidden (no clutter), and
-   coincident walls of touching tiles share a color so they don't z-fight. */
-.scene.is-assembling :deep(.polycss-mesh:not(.is-removed) [data-facename="top"].is-face-hidden),
+/* During the start-of-game assemble intro, reveal each tile's hidden full-span
+   side walls (tops are always shown) so even fully-buried inner tiles fall as
+   whole boxes. Coincident walls of touching tiles share a color, no z-fight. */
 .scene.is-assembling :deep(.polycss-mesh:not(.is-removed) [data-facename].is-full-span) {
   visibility: visible;
 }
