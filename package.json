@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@layoutit/polycss": "^0.2.7",
+    "animejs": "^4.5.0",
     "vue": "^3.5.38"
   }
 }

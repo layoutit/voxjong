@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { animate, utils } from "animejs";
 import {
   buildPolyCameraSceneTransform,
   createPolyPerspectiveCamera,
@@ -57,8 +58,7 @@ const isAssembling = ref(false);
 // un-textured board never flashes at rest while images preload.
 const boardPreparing = ref(false);
 let introPlans: IntroPlan[] = [];
-let introRafId: number | null = null;
-let introClearTimer: number | null = null;
+let introClearAnim: ReturnType<typeof animate> | null = null;
 // Bumped whenever a fresh intro sequence begins (mount / New Game); a pending
 // async first-load intro checks it so it can't fire after being superseded.
 let introGeneration = 0;
@@ -872,15 +872,11 @@ type IntroPlan = {
   bounceOffset: number; // px of the little bounce-up on contact
   fallDelay: number; // ms before this tile starts falling
   fallTime: number; // ms of the accelerating fall
-  landed: boolean;
 };
 
 function stopAssembleIntro(): void {
-  if (introRafId !== null) {
-    cancelAnimationFrame(introRafId);
-    introRafId = null;
-  }
   for (const plan of introPlans) {
+    utils.remove(plan.el); // cancel any in-flight anime.js tweens on this tile
     plan.el.style.willChange = "";
     plan.el.style.transition = "";
     plan.el.style.transform = "";
@@ -916,9 +912,9 @@ function runClearOut(onDone: () => void): void {
   }
 
   stopAssembleIntro();
-  if (introClearTimer !== null) {
-    window.clearTimeout(introClearTimer);
-    introClearTimer = null;
+  if (introClearAnim) {
+    introClearAnim.cancel();
+    introClearAnim = null;
   }
   playClearSound();
 
@@ -950,22 +946,26 @@ function runClearOut(onDone: () => void): void {
 
   isAssembling.value = true;
   for (const item of positioned) {
-    const delay =
-      ((maxX - item.x) / span) * introClearStagger + Math.random() * 40;
     item.el.style.willChange = "transform";
-    item.el.style.transition = `transform ${introClearDuration}ms cubic-bezier(0.4, 0, 1, 1) ${delay}ms`;
-    item.el.style.transform = `translate3d(${localX}px, ${localY}px, 0)`;
   }
-
-  introClearTimer = window.setTimeout(() => {
-    introClearTimer = null;
+  // anime.js staggered sweep — rightmost tiles leave first.
+  introClearAnim = animate(meshes, {
+    translateX: localX,
+    translateY: localY,
+    duration: introClearDuration,
+    delay: (_el, i) =>
+      ((maxX - positioned[i].x) / span) * introClearStagger +
+      Math.random() * 40,
+    ease: "inQuad",
+  });
+  void introClearAnim.then(() => {
+    introClearAnim = null;
     for (const item of positioned) {
       item.el.style.willChange = "";
-      item.el.style.transition = "";
       // Leave the off-screen transform; the drop-in intro overwrites it.
     }
     onDone();
-  }, introClearStagger + introClearDuration + 40);
+  });
 }
 
 function runAssembleIntro(): void {
@@ -1025,7 +1025,6 @@ function runAssembleIntro(): void {
       bounceOffset: 0,
       fallDelay: Math.max(0, land - fallTime),
       fallTime,
-      landed: false,
     });
   }
   if (plans.length === 0) {
@@ -1057,71 +1056,71 @@ function runAssembleIntro(): void {
   const viewportHeight = sceneRoot.value?.clientHeight || window.innerHeight;
   const baseOffset = viewportHeight * 1.3; // screen px above rest (off-screen)
 
-  const applyOffset = (el: HTMLElement, px: number) => {
-    el.style.transform = `translate3d(${upX * px}px, ${upY * px}px, 0)`;
-  };
-
+  // Park every tile off-screen along the calibrated up-direction; anime.js owns
+  // the transform from here.
   for (const plan of plans) {
     plan.startOffset = baseOffset * (1 + Math.random() * 0.18);
     plan.bounceOffset = introBounceScreenPx;
     plan.el.style.willChange = "transform";
-    plan.el.style.transition = "none";
-    applyOffset(plan.el, plan.startOffset);
+    utils.set(plan.el, {
+      translateX: upX * plan.startOffset,
+      translateY: upY * plan.startOffset,
+    });
   }
   void document.body.offsetHeight;
 
   introPlans = plans;
   isAssembling.value = true;
   boardPreparing.value = false; // tiles are off-screen now — safe to reveal
+
   let lastSoundAt = -Infinity;
   let soundsPlayed = 0;
-  const startTime = performance.now();
-
-  const step = (now: number) => {
-    const time = now - startTime;
-    let allDone = true;
-
-    for (const plan of plans) {
-      const local = time - plan.fallDelay;
-      let offset: number;
-      if (local <= 0) {
-        offset = plan.startOffset;
-        allDone = false;
-      } else if (local < plan.fallTime) {
-        // Accelerating fall: distance fallen grows with the square of time.
-        const progress = local / plan.fallTime;
-        offset = plan.startOffset * (1 - progress * progress);
-        allDone = false;
-      } else if (local < plan.fallTime + introBounceTime) {
-        // Contact: fire a throttled click, then a small damped bounce.
-        if (!plan.landed) {
-          plan.landed = true;
-          if (
-            now - lastSoundAt > introLandingMinGap &&
-            soundsPlayed < introLandingSoundMax
-          ) {
-            playLandingSound();
-            lastSoundAt = now;
-            soundsPlayed += 1;
-          }
-        }
-        const bounce = (local - plan.fallTime) / introBounceTime; // 0..1
-        offset = plan.bounceOffset * Math.sin(Math.PI * bounce) * (1 - bounce);
-        allDone = false;
-      } else {
-        offset = 0;
-      }
-      applyOffset(plan.el, offset);
+  let settled = 0;
+  const fireLanding = () => {
+    const now = performance.now();
+    if (
+      now - lastSoundAt > introLandingMinGap &&
+      soundsPlayed < introLandingSoundMax
+    ) {
+      playLandingSound();
+      lastSoundAt = now;
+      soundsPlayed += 1;
     }
-
-    if (allDone) {
-      stopAssembleIntro();
-      clockRunning.value = true; // last piece landed → start the clock
-      return;
-    }
-    introRafId = requestAnimationFrame(step);
   };
-  introRafId = requestAnimationFrame(step);
+
+  for (const plan of plans) {
+    const bounceX = upX * plan.bounceOffset;
+    const bounceY = upY * plan.bounceOffset;
+    // Accelerating fall (gravity), then a small settle bounce. fallDelay/fallTime
+    // come from the support graph above, so a tile only lands once the tiles
+    // beneath it are settled.
+    animate(plan.el, {
+      translateX: 0,
+      translateY: 0,
+      delay: plan.fallDelay,
+      duration: plan.fallTime,
+      ease: "inQuad",
+      onComplete: () => {
+        fireLanding(); // contact
+        animate(plan.el, {
+          keyframes: [
+            { translateX: bounceX, translateY: bounceY, ease: "outQuad" },
+            { translateX: 0, translateY: 0, ease: "inQuad" },
+          ],
+          duration: introBounceTime,
+          onComplete: () => {
+            plan.el.style.willChange = "";
+            settled += 1;
+            if (settled === plans.length) {
+              introPlans = [];
+              isAssembling.value = false;
+              clockRunning.value = true; // last piece landed → start the clock
+            }
+          },
+        });
+      },
+    });
+  }
 }
 
 function mountPolyScene(): void {
@@ -1194,9 +1193,9 @@ onBeforeUnmount(() => {
   clearSelectedTileVisual();
   clearHintTileVisual();
   stopAssembleIntro();
-  if (introClearTimer !== null) {
-    window.clearTimeout(introClearTimer);
-    introClearTimer = null;
+  if (introClearAnim) {
+    introClearAnim.cancel();
+    introClearAnim = null;
   }
   if (refreshRafId !== null) {
     cancelAnimationFrame(refreshRafId);
@@ -1207,7 +1206,7 @@ onBeforeUnmount(() => {
 
 function newGame(): void {
   // Ignore repeat clicks while a board-clear sweep is already in flight.
-  if (introClearTimer !== null) {
+  if (introClearAnim) {
     return;
   }
   introGeneration += 1; // supersede any pending first-load intro
