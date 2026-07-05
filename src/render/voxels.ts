@@ -70,12 +70,6 @@ export type TileMeshSpec = {
   polygons: Polygon[];
 };
 
-const tileTopUvs: NonNullable<Polygon["uvs"]> = [
-  [0, 0],
-  [1, 0],
-  [1, 1],
-  [0, 1],
-];
 const tileHeight = 0.5;
 const gridUnitWorldScale = 0.5;
 
@@ -148,20 +142,6 @@ function tileColors(
   };
 }
 
-function createTileCellIndex(
-  activeTiles: ReadonlyArray<GameTile>
-): Map<string, GameTile> {
-  const cells = new Map<string, GameTile>();
-  for (const tile of activeTiles) {
-    for (let gridX = tile.gridX; gridX < tile.gridX2; gridX += 1) {
-      for (let gridY = tile.gridY; gridY < tile.gridY2; gridY += 1) {
-        cells.set(`${gridX}:${gridY}:${tile.z}`, tile);
-      }
-    }
-  }
-  return cells;
-}
-
 export function computeTileGridDimensions(
   activeTiles: ReadonlyArray<Pick<GameTile, "gridX2" | "gridY2">>
 ): TileGridDimensions {
@@ -176,22 +156,6 @@ export function computeTileGridDimensions(
   );
 }
 
-function hasCoveredTop(
-  tile: GameTile,
-  cells: ReadonlyMap<string, GameTile>
-): boolean {
-  const z = tile.z + 1;
-
-  for (let gridX = tile.gridX; gridX < tile.gridX2; gridX += 1) {
-    for (let gridY = tile.gridY; gridY < tile.gridY2; gridY += 1) {
-      if (!cells.has(`${gridX}:${gridY}:${z}`)) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
 type Interval = {
   start: number;
   end: number;
@@ -199,10 +163,6 @@ type Interval = {
 
 function intervalKey(faceName: TileFaceName, span?: Interval): string {
   return span ? `${faceName}:${span.start}:${span.end}` : faceName;
-}
-
-function sameInterval(left: Interval, right: Interval): boolean {
-  return left.start === right.start && left.end === right.end;
 }
 
 function sideSpanRange(tile: GameTile, faceName: TileFaceName): Interval {
@@ -282,17 +242,6 @@ function exposedSideSpans(
   return spans;
 }
 
-function stableSideSpans(tile: GameTile, faceName: TileFaceName): Interval[] {
-  const range = sideSpanRange(tile, faceName);
-  const spans: Interval[] = [];
-  for (let start = range.start; start < range.end; start += 1) {
-    for (let end = start + 1; end <= range.end; end += 1) {
-      spans.push({ start, end });
-    }
-  }
-  return spans;
-}
-
 function tilePolyBounds(
   tile: GameTile,
   dimensions: TileGridDimensions
@@ -361,9 +310,11 @@ export function createTileMeshSpecs(
   dimensions: TileGridDimensions = computeTileGridDimensions(tiles),
   activeTiles: ReadonlyArray<GameTile> = tiles.filter((tile) => !tile.removed)
 ): TileMeshSpec[] {
-  const cells = createTileCellIndex(activeTiles);
   return tiles.flatMap((tile) => {
     const active = !tile.removed;
+    if (!active) {
+      return [];
+    }
     const selectable = active && freeTileIds.has(tile.id);
     const colors = tileColors(palette, selectable);
     const texture = tileTextures[tile.code] ?? tileTextures.Man1;
@@ -371,13 +322,9 @@ export function createTileMeshSpecs(
     const polygons: Polygon[] = [];
 
     for (const faceName of sideFaceNames) {
-      const visibleSpans = active
+      for (const span of active
         ? exposedSideSpans(tile, faceName, activeTiles)
-        : [];
-      for (const span of stableSideSpans(tile, faceName)) {
-        const faceVisible = visibleSpans.some((visibleSpan) =>
-          sameInterval(visibleSpan, span)
-        );
+        : []) {
         polygons.push(
           ...polygonsForFace(
             sideSpanBounds(bounds, faceName, span, dimensions),
@@ -390,7 +337,7 @@ export function createTileMeshSpecs(
                 selectable,
                 palette.textureSet,
                 texture,
-                faceVisible,
+                true,
                 intervalKey(faceName, span),
                 span
               ),
@@ -403,24 +350,13 @@ export function createTileMeshSpecs(
     polygons.push(
       ...polygonsForFace(bounds, "top", colors.side, {
         color: colors.top,
-        texture,
-        material: {
-          texture,
-          key: `${palette.textureSet}:${tile.code}`,
-          presentation: {
-            backend: "image",
-            imageRendering: "auto",
-            lighting: "source",
-          },
-        },
-        uvs: tileTopUvs,
         data: faceData(
           tile,
           "top",
           selectable,
           palette.textureSet,
           texture,
-          active && !hasCoveredTop(tile, cells),
+          true,
           intervalKey("top")
         ),
       })

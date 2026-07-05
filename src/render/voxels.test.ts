@@ -63,7 +63,7 @@ describe("PolyCSS tile rendering", () => {
       tileCode: "Man2",
       selectable: true,
     });
-    expect(mesh?.polygons).toHaveLength(13);
+    expect(mesh?.polygons).toHaveLength(5);
     expect(visibleFaceNames(mesh?.polygons ?? [])).toEqual([
       "right",
       "left",
@@ -81,13 +81,6 @@ describe("PolyCSS tile rendering", () => {
         [0, 1.25, 2],
       ],
       color: "#f6ead0",
-      texture: "/man2.png",
-      uvs: [
-        [0, 0],
-        [1, 0],
-        [1, 1],
-        [0, 1],
-      ],
       data: {
         tileId: 1,
         tileCode: "Man2",
@@ -103,6 +96,8 @@ describe("PolyCSS tile rendering", () => {
         z: 3,
       },
     });
+    expect(top.texture).toBeUndefined();
+    expect(top.uvs).toBeUndefined();
 
     expect(polygonForFace(mesh?.polygons ?? [], "right")).toMatchObject({
       vertices: [
@@ -193,6 +188,15 @@ describe("PolyCSS tile rendering", () => {
     ]);
   });
 
+  it("does not keep hidden geometry for removed tiles", () => {
+    const removedTile = {
+      ...tile(1, "Man1"),
+      removed: true,
+    };
+
+    expect(createTileMeshSpecs([removedTile], new Set(), textures)).toEqual([]);
+  });
+
   it("culls covered faces while keeping a rotation-safe exterior shell", () => {
     const activeTiles = turtleCells.map((cell): GameTile => {
       return {
@@ -224,7 +228,7 @@ describe("PolyCSS tile rendering", () => {
       right: 22,
       front: 36,
       back: 36,
-      top: 88,
+      top: 144,
     });
   });
 
@@ -331,7 +335,6 @@ describe("PolyCSS tile rendering", () => {
     });
     expect(polygonForFace(mesh?.polygons ?? [], "top")).toMatchObject({
       color: "#f6ead0",
-      texture: "/man1.png",
       data: {
         tileId: 2,
         tileCode: "Man3",
@@ -340,6 +343,7 @@ describe("PolyCSS tile rendering", () => {
         blocked: true,
       },
     });
+    expect(polygonForFace(mesh?.polygons ?? [], "top").texture).toBeUndefined();
     expect(polygonForFace(mesh?.polygons ?? [], "front")).toMatchObject({
       color: "#e1d2af",
       data: {
@@ -372,6 +376,6 @@ describe("PolyCSS tile rendering", () => {
         new Set([1]),
         textures
       )
-    ).toHaveLength(26);
+    ).toHaveLength(10);
   });
 });

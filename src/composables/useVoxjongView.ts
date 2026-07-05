@@ -2,8 +2,6 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 
 export type ViewMode = "isometric" | "topdown";
 
-type ScheduleVisualRefresh = () => void;
-
 const rotXMin = 0;
 const rotXMax = 89;
 const rotateSpeed = 0.2;
@@ -41,7 +39,7 @@ function preventNativeGestureZoom(event: Event): void {
   event.preventDefault();
 }
 
-export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
+export function useVoxjongView() {
   const rotX = ref(55);
   const rotY = ref(35);
   const pan = ref(0);
@@ -107,7 +105,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     const clampedZoom = clampZoom(zoom.value);
     if (clampedZoom !== zoom.value) {
       zoom.value = clampedZoom;
-      scheduleVisualRefresh();
     }
   }
 
@@ -131,7 +128,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
       return;
     }
     setZoom(value);
-    scheduleVisualRefresh();
   }
 
   function setView(mode: ViewMode): void {
@@ -139,7 +135,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     const preset = mode === "topdown" ? topDownView : isometricView;
     rotX.value = clampRotX(preset.rotX);
     rotY.value = clampRotY(preset.rotY);
-    scheduleVisualRefresh();
   }
 
   function rotateByDragDelta(deltaX: number, deltaY: number): void {
@@ -148,14 +143,12 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     }
     rotY.value = clampRotY(rotY.value - deltaX * rotateSpeed);
     rotX.value = clampRotX(rotX.value - deltaY * rotateSpeed);
-    scheduleVisualRefresh();
   }
 
   function onWheelZoom(event: WheelEvent): void {
     const deltaY = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
     const speed = event.ctrlKey ? 0.01 : 0.0032;
     applyZoomDelta(-deltaY * speed);
-    scheduleVisualRefresh();
   }
 
   function onTouchStart(event: TouchEvent): void {
@@ -176,7 +169,6 @@ export function useVoxjongView(scheduleVisualRefresh: ScheduleVisualRefresh) {
     const distanceDelta = nextDistance - pinchDistance.value;
     pinchDistance.value = nextDistance;
     applyZoomDelta(distanceDelta * 0.0042);
-    scheduleVisualRefresh();
     event.preventDefault();
   }
 
