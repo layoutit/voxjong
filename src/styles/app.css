@@ -44,18 +44,25 @@
   --tile-face: #e6d8b8;
   --tile-top: #f6ead0;
   --tile-side: #e1d2af;
+  --tile-side-front-back: #d0c2a2;
+  --tile-side-left-right: #c5b799;
   --tile-hint: #ffe5a8;
   --tile-hint-top: #ffe5a8;
+  --tile-hint-front-back: #ecd49c;
+  --tile-hint-left-right: #dfc993;
   --tile-active: #ffcb87;
   --tile-active-top: #ffcb87;
+  --tile-active-front-back: #ecbc7d;
+  --tile-active-left-right: #dfb276;
   --tile-hover: #ffe5a8;
   --tile-hover-top: #ffe5a8;
+  --tile-hover-front-back: #ecd49c;
+  --tile-hover-left-right: #dfc993;
   --tile-blocked: #f6ead0;
   --tile-blocked-top: #f6ead0;
   --tile-blocked-top-opacity: 1;
   --tile-disabled-art-cover: var(--tile-top);
   --tile-disabled-art-cover-opacity: 0.5;
-  --tile-top-filter: none;
   --tile-face-outline: rgba(110, 94, 54, 0.16);
   --github-corner-bg: #ffffff;
   --github-corner-color: #104d2b;
@@ -120,18 +127,25 @@
   --tile-face: #1e1e1e;
   --tile-top: #1e1e1e;
   --tile-side: #2a2a2a;
+  --tile-side-front-back: #272727;
+  --tile-side-left-right: #252525;
   --tile-hint: #332a1c;
   --tile-hint-top: #3b301f;
+  --tile-hint-front-back: #2f271a;
+  --tile-hint-left-right: #2d2519;
   --tile-active: #3a2d1d;
   --tile-active-top: #49361f;
+  --tile-active-front-back: #362a1b;
+  --tile-active-left-right: #332719;
   --tile-hover: #332a1c;
   --tile-hover-top: #3b301f;
+  --tile-hover-front-back: #2f271a;
+  --tile-hover-left-right: #2d2519;
   --tile-blocked: #181818;
   --tile-blocked-top: var(--tile-top);
   --tile-blocked-top-opacity: 1;
   --tile-disabled-art-cover: var(--tile-top);
   --tile-disabled-art-cover-opacity: 0.46;
-  --tile-top-filter: none;
   --tile-face-outline: rgba(235, 215, 150, 0.12);
   --github-corner-bg: #dfd2a3;
   --github-corner-color: #07110e;
@@ -241,18 +255,20 @@
   min-height: 100%;
 }
 
+.scene :deep(.polycss-mesh) {
+  background: transparent !important;
+}
+
 .scene :deep(.polycss-mesh [data-facename]) {
-  box-shadow: inset 0 0 0 0.5px var(--tile-face-outline);
+  outline: 0.5px solid var(--tile-face-outline);
+  outline-offset: -0.5px;
   cursor: default;
-  transition: background-color var(--theme-transition-duration)
-      var(--theme-transition-easing),
-    color var(--theme-transition-duration) var(--theme-transition-easing),
-    opacity var(--theme-transition-duration) var(--theme-transition-easing),
-    filter var(--theme-transition-duration) var(--theme-transition-easing);
 }
 
 .scene :deep(.polycss-mesh.is-removed),
-.scene :deep(.polycss-mesh [data-facename].is-face-hidden) {
+.scene :deep(.polycss-mesh [data-facename].is-face-hidden),
+.scene :deep(.polycss-mesh [data-facevisible="false"]),
+.scene :deep(.polycss-mesh [data-face-visible="false"]) {
   visibility: hidden;
   pointer-events: none;
 }
@@ -268,7 +284,6 @@
   background-clip: border-box !important;
   box-sizing: border-box;
   color: var(--tile-top) !important;
-  filter: var(--tile-top-filter);
   image-rendering: auto !important;
   overflow: hidden;
   padding: var(--tile-top-art-inset);
@@ -300,12 +315,14 @@
 
 .scene :deep(.polycss-mesh [data-facename="front"]),
 .scene :deep(.polycss-mesh [data-facename="back"]) {
-  filter: brightness(0.925);
+  background-color: var(--tile-side-front-back) !important;
+  color: var(--tile-side-front-back) !important;
 }
 
 .scene :deep(.polycss-mesh [data-facename="right"]),
 .scene :deep(.polycss-mesh [data-facename="left"]) {
-  filter: brightness(0.875);
+  background-color: var(--tile-side-left-right) !important;
+  color: var(--tile-side-left-right) !important;
 }
 
 .scene :deep(.polycss-mesh.is-hint [data-facename]) {
@@ -318,6 +335,18 @@
   color: var(--tile-hint-top) !important;
 }
 
+.scene :deep(.polycss-mesh.is-hint [data-facename="front"]),
+.scene :deep(.polycss-mesh.is-hint [data-facename="back"]) {
+  background-color: var(--tile-hint-front-back) !important;
+  color: var(--tile-hint-front-back) !important;
+}
+
+.scene :deep(.polycss-mesh.is-hint [data-facename="right"]),
+.scene :deep(.polycss-mesh.is-hint [data-facename="left"]) {
+  background-color: var(--tile-hint-left-right) !important;
+  color: var(--tile-hint-left-right) !important;
+}
+
 .scene :deep(.polycss-mesh.is-active [data-facename]) {
   background-color: var(--tile-active) !important;
   color: var(--tile-active) !important;
@@ -328,6 +357,18 @@
   color: var(--tile-active-top) !important;
 }
 
+.scene :deep(.polycss-mesh.is-active [data-facename="front"]),
+.scene :deep(.polycss-mesh.is-active [data-facename="back"]) {
+  background-color: var(--tile-active-front-back) !important;
+  color: var(--tile-active-front-back) !important;
+}
+
+.scene :deep(.polycss-mesh.is-active [data-facename="right"]),
+.scene :deep(.polycss-mesh.is-active [data-facename="left"]) {
+  background-color: var(--tile-active-left-right) !important;
+  color: var(--tile-active-left-right) !important;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .scene
     :deep(
@@ -336,6 +377,34 @@
     ) {
     background-color: var(--tile-hover) !important;
     color: var(--tile-hover) !important;
+  }
+
+  .scene
+    :deep(
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename="front"]
+    ),
+  .scene
+    :deep(
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename="back"]
+    ) {
+    background-color: var(--tile-hover-front-back) !important;
+    color: var(--tile-hover-front-back) !important;
+  }
+
+  .scene
+    :deep(
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename="right"]
+    ),
+  .scene
+    :deep(
+      .polycss-mesh.is-selectable:not(.is-active):not(.is-hint):hover
+        [data-facename="left"]
+    ) {
+    background-color: var(--tile-hover-left-right) !important;
+    color: var(--tile-hover-left-right) !important;
   }
 
   .scene
@@ -354,12 +423,6 @@
 
 .scene :deep(.polycss-mesh.is-blocked [data-facename]) {
   cursor: not-allowed;
-}
-
-.scene :deep(.polycss-mesh.is-blocked) {
-  background-color: var(--tile-blocked);
-  transition: background-color var(--theme-transition-duration)
-    var(--theme-transition-easing);
 }
 
 .scene :deep(.polycss-mesh.is-blocked [data-facename="top"]) {

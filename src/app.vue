@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  buildPolyCameraSceneTransform,
   createPolyPerspectiveCamera,
   createPolyScene,
   type ParseResult,
@@ -21,6 +22,7 @@ import {
 } from "./render/voxels";
 
 type ThemeName = "light" | "dark";
+type Vec3 = [number, number, number];
 
 const clickMoveTolerance = 11;
 const polyCameraZoomScale = 50;
@@ -68,6 +70,35 @@ const voxjongVersionLabel = computed(() => {
     typeof __VOXJONG_VERSION__ === "string" ? __VOXJONG_VERSION__ : "0.0";
   return version.trim() ? `v${version}` : "v0.0";
 });
+function computeTileMeshAutoCenterOffset(
+  nextTileMeshes: ReadonlyArray<TileMeshSpec>
+): Vec3 {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (const tileMesh of nextTileMeshes) {
+    for (const polygon of tileMesh.polygons) {
+      for (const vertex of polygon.vertices) {
+        minX = Math.min(minX, vertex[0]);
+        minY = Math.min(minY, vertex[1]);
+        minZ = Math.min(minZ, vertex[2]);
+        maxX = Math.max(maxX, vertex[0]);
+        maxY = Math.max(maxY, vertex[1]);
+        maxZ = Math.max(maxZ, vertex[2]);
+      }
+    }
+  }
+
+  if (!Number.isFinite(minX + minY + minZ + maxX + maxY + maxZ)) {
+    return [0, 0, 0];
+  }
+
+  return [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2];
+}
 
 const {
   rotX,
@@ -85,7 +116,7 @@ const {
   onTouchEnd,
   resetGestureState,
   clampCurrentView,
-} = useVoxjongView(scheduleTileVisualRefresh);
+} = useVoxjongView();
 
 const {
   tiles,
@@ -498,12 +529,14 @@ function createTileParseResult(tileMesh: TileMeshSpec): ParseResult {
 
 function syncPolyMeshMetadata(
   handle: PolyMeshHandle,
-  tileMesh: TileMeshSpec
+  tileMesh: TileMeshSpec,
+  meshSignature = tileMeshSignature(tileMesh)
 ): void {
   handle.element.dataset.tileId = String(tileMesh.tileId);
   handle.element.dataset.tileCode = tileMesh.tileCode;
   handle.element.dataset.selectable = String(tileMesh.selectable);
   handle.element.dataset.removed = String(tileMesh.removed);
+  handle.element.dataset.meshSignature = meshSignature;
 
   const faces = handle.element.querySelectorAll<HTMLElement>(
     "[data-poly-index]"
@@ -548,6 +581,20 @@ function meshPolygonCount(handle: PolyMeshHandle): number {
   return handle.element.querySelectorAll("[data-poly-index]").length;
 }
 
+function tileMeshSignature(tileMesh: TileMeshSpec): string {
+  return tileMesh.polygons
+    .map((polygon) => {
+      const data = polygon.data as TilePolygonData | undefined;
+      const vertices = polygon.vertices
+        .map((vertex) =>
+          vertex.map((value) => Number(value.toFixed(4))).join(",")
+        )
+        .join("|");
+      return `${data?.faceKey ?? ""}:${data?.faceVisible ?? true}:${vertices}`;
+    })
+    .join(";");
+}
+
 function syncPolyCamera(): void {
   if (!polyCameraHandle || !polySceneHandle) {
     return;
@@ -557,7 +604,10 @@ function syncPolyCamera(): void {
     rotX: rotX.value,
     rotY: rotY.value,
   });
-  polySceneHandle.applyCamera();
+  polySceneHandle.sceneElement.style.transform = buildPolyCameraSceneTransform(
+    polyCameraHandle.state,
+    { autoCenterOffset: tileMeshAutoCenterOffset.value, layoutScale: 1 }
+  );
   syncPolySceneDepthOffset();
 }
 
@@ -593,25 +643,30 @@ function syncPolyTileMeshes(nextTileMeshes = tileMeshes.value): void {
   }
 
   for (const tileMesh of nextTileMeshes) {
+    const nextSignature = tileMeshSignature(tileMesh);
     const existingHandle = polyTileMeshHandles.get(tileMesh.tileId);
     if (existingHandle) {
-      if (meshPolygonCount(existingHandle) !== tileMesh.polygons.length) {
+      if (
+        meshPolygonCount(existingHandle) !== tileMesh.polygons.length ||
+        existingHandle.element.dataset.meshSignature !== nextSignature
+      ) {
         existingHandle.setPolygons(tileMesh.polygons, {
           merge: false,
           stableDom: true,
           recomputeAutoCenter: false,
         });
       }
-      syncPolyMeshMetadata(existingHandle, tileMesh);
+      syncPolyMeshMetadata(existingHandle, tileMesh, nextSignature);
       continue;
     }
 
     const handle = polySceneHandle.add(createTileParseResult(tileMesh), {
       id: `tile-${tileMesh.tileId}`,
+      excludeFromAutoCenter: true,
       merge: false,
       stableDom: true,
     });
-    syncPolyMeshMetadata(handle, tileMesh);
+    syncPolyMeshMetadata(handle, tileMesh, nextSignature);
     polyTileMeshHandles.set(tileMesh.tileId, handle);
   }
 }
@@ -710,6 +765,9 @@ const tileMeshes = computed(() => {
     activeTiles.value
   );
 });
+const tileMeshAutoCenterOffset = computed(() =>
+  computeTileMeshAutoCenterOffset(tileMeshes.value)
+);
 
 watch(
   themeMetaColor,
@@ -723,7 +781,6 @@ watch(
   [zoom, rotX, rotY],
   () => {
     syncPolyCamera();
-    scheduleTileVisualRefresh();
   },
   { flush: "post" }
 );

@@ -63,7 +63,7 @@ describe("PolyCSS tile rendering", () => {
       tileCode: "Man2",
       selectable: true,
     });
-    expect(mesh?.polygons).toHaveLength(13);
+    expect(mesh?.polygons).toHaveLength(5);
     expect(visibleFaceNames(mesh?.polygons ?? [])).toEqual([
       "right",
       "left",
@@ -188,6 +188,15 @@ describe("PolyCSS tile rendering", () => {
     ]);
   });
 
+  it("does not keep hidden geometry for removed tiles", () => {
+    const removedTile = {
+      ...tile(1, "Man1"),
+      removed: true,
+    };
+
+    expect(createTileMeshSpecs([removedTile], new Set(), textures)).toEqual([]);
+  });
+
   it("culls covered faces while keeping a rotation-safe exterior shell", () => {
     const activeTiles = turtleCells.map((cell): GameTile => {
       return {
@@ -219,7 +228,7 @@ describe("PolyCSS tile rendering", () => {
       right: 22,
       front: 36,
       back: 36,
-      top: 88,
+      top: 144,
     });
   });
 
@@ -367,6 +376,6 @@ describe("PolyCSS tile rendering", () => {
         new Set([1]),
         textures
       )
-    ).toHaveLength(26);
+    ).toHaveLength(10);
   });
 });
