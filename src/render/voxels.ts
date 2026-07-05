@@ -322,9 +322,9 @@ export function createTileMeshSpecs(
     const polygons: Polygon[] = [];
 
     for (const faceName of sideFaceNames) {
-      for (const span of active
-        ? exposedSideSpans(tile, faceName, activeTiles)
-        : []) {
+      const range = sideSpanRange(tile, faceName);
+      const exposed = exposedSideSpans(tile, faceName, activeTiles);
+      for (const span of exposed) {
         polygons.push(
           ...polygonsForFace(
             sideSpanBounds(bounds, faceName, span, dimensions),
@@ -340,6 +340,35 @@ export function createTileMeshSpecs(
                 true,
                 intervalKey(faceName, span),
                 span
+              ),
+            }
+          )
+        );
+      }
+      // Also emit the tile's full-span wall as a HIDDEN face whenever the side
+      // isn't already fully exposed. It stays hidden at rest (occluded), but the
+      // assemble intro reveals it (.is-full-span) so buried tiles fall as whole
+      // boxes instead of flat tops.
+      const fullyExposed =
+        exposed.length === 1 &&
+        exposed[0].start === range.start &&
+        exposed[0].end === range.end;
+      if (!fullyExposed) {
+        polygons.push(
+          ...polygonsForFace(
+            sideSpanBounds(bounds, faceName, range, dimensions),
+            faceName,
+            colors.side,
+            {
+              data: faceData(
+                tile,
+                faceName,
+                selectable,
+                palette.textureSet,
+                texture,
+                false,
+                intervalKey(faceName, range),
+                range
               ),
             }
           )

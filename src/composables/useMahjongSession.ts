@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   canPair,
-  createGameTiles,
+  createGameDeal,
   getAvailablePairs,
   getFreeTileIds,
   turtleCells,
@@ -20,13 +20,18 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 export function useMahjongSession() {
-  const tiles = ref<GameTile[]>(createGameTiles());
+  const initialDeal = createGameDeal();
+  const tiles = ref<GameTile[]>(initialDeal.tiles);
+  const removalOrder = ref<Array<[number, number]>>(initialDeal.removalOrder);
   const selectedTileId = ref<number | null>(null);
   const elapsedSeconds = ref(0);
   const hintedTileIds = ref<number[]>([]);
   const hintPairIndex = ref(0);
   const undoStack = ref<MoveRecord[]>([]);
   const redoStack = ref<MoveRecord[]>([]);
+  // The clock only runs once the board is ready to play (set true after the
+  // assemble intro finishes), so the timer doesn't count the animation.
+  const clockRunning = ref(false);
   let timerId: ReturnType<typeof setInterval> | null = null;
 
   const activeTiles = computed(() =>
@@ -55,6 +60,7 @@ export function useMahjongSession() {
 
   function restartTimer(): void {
     elapsedSeconds.value = 0;
+    clockRunning.value = false;
   }
 
   function startTimer(): void {
@@ -62,7 +68,7 @@ export function useMahjongSession() {
       return;
     }
     timerId = setInterval(() => {
-      if (!isWon.value) {
+      if (clockRunning.value && !isWon.value) {
         elapsedSeconds.value += 1;
       }
     }, 1000);
@@ -197,10 +203,25 @@ export function useMahjongSession() {
   }
 
   function resetGame(): void {
-    tiles.value = createGameTiles();
+    const deal = createGameDeal();
+    tiles.value = deal.tiles;
+    removalOrder.value = deal.removalOrder;
     clearMoveHistory();
     clearSelectionAndHintState();
     restartTimer();
+  }
+
+  // Dev helper: fast-forward the guaranteed-solvable removal order, stopping
+  // with `leave` tiles still on the board (default 2 = the final pair) so the
+  // victory can be triggered by a couple of real clicks.
+  function autoSolve(leave = 2): void {
+    clearSelectionAndHintState();
+    for (const [firstId, secondId] of removalOrder.value) {
+      if (remainingTiles.value <= leave) {
+        break;
+      }
+      removePair(firstId, secondId);
+    }
   }
 
   onMounted(startTimer);
@@ -215,6 +236,7 @@ export function useMahjongSession() {
     isWon,
     selectedTile,
     timerLabel,
+    clockRunning,
     freeTileIds,
     hasMoves,
     hintedTileIds,
@@ -227,5 +249,6 @@ export function useMahjongSession() {
     redoMove,
     showHint,
     resetGame,
+    autoSolve,
   };
 }

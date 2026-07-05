@@ -226,6 +226,16 @@
   text-decoration: none;
 }
 
+.chip-button-icon {
+  flex: none;
+  display: block;
+}
+
+.chip--sound.is-muted {
+  color: var(--ui-color-muted);
+  opacity: 0.7;
+}
+
 .chip--button:hover:not(:disabled) {
   color: var(--ui-color-hover);
   transform: translateX(1px);
@@ -271,6 +281,20 @@
 .scene :deep(.polycss-mesh [data-face-visible="false"]) {
   visibility: hidden;
   pointer-events: none;
+}
+
+/* Before the very first drop-in, keep the board hidden while images preload so
+   the un-textured, at-rest board (blank tops + blocked-wrapper slabs) never
+   flashes. The drop-in clears this once tiles are parked off-screen. */
+.scene.is-preparing :deep(.polycss-mesh) {
+  visibility: hidden;
+}
+
+/* During the start-of-game assemble intro, reveal each tile's hidden full-span
+   side walls (tops are always shown) so even fully-buried inner tiles fall as
+   whole boxes. Coincident walls of touching tiles share a color, no z-fight. */
+.scene.is-assembling :deep(.polycss-mesh:not(.is-removed) [data-facename].is-full-span) {
+  visibility: visible;
 }
 
 .scene :deep(.polycss-mesh [data-facename="top"]) {
