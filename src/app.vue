@@ -26,7 +26,7 @@ type Vec3 = [number, number, number];
 
 const clickMoveTolerance = 11;
 const polyCameraZoomScale = 50;
-const polySceneDepthOffset = 50;
+const polySceneViewportOffset = { x: -10, y: -37 };
 const turtleGridDimensions = computeTileGridDimensions(turtleCells);
 const themeStorageKey = "voxjong-theme";
 const themeMetaColors = {
@@ -608,24 +608,22 @@ function syncPolyCamera(): void {
     polyCameraHandle.state,
     { autoCenterOffset: tileMeshAutoCenterOffset.value, layoutScale: 1 }
   );
-  syncPolySceneDepthOffset();
+  syncPolySceneViewportOffset();
 }
 
-function syncPolySceneDepthOffset(): void {
+function syncPolySceneViewportOffset(): void {
   const sceneElement = polySceneHandle?.sceneElement;
   if (!sceneElement) {
     return;
   }
-  const depthOffsetPattern = new RegExp(
-    `\\s*translateY\\(${polySceneDepthOffset}px\\)`,
-    "g"
-  );
+  const viewportOffsetPattern =
+    /\s*translate\(-?\d+(?:\.\d+)?px,\s*-?\d+(?:\.\d+)?px\)/g;
   const transform = sceneElement.style.transform
-    .replace(depthOffsetPattern, "")
+    .replace(viewportOffsetPattern, "")
     .trim();
   sceneElement.style.transform = transform.replace(
     /^(scale\([^)]+\))/,
-    `$1 translateY(${polySceneDepthOffset}px)`
+    `$1 translate(${polySceneViewportOffset.x}px, ${polySceneViewportOffset.y}px)`
   );
 }
 
