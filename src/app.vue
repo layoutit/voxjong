@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   buildPolyCameraSceneTransform,
   createPolyPerspectiveCamera,
@@ -11,6 +11,7 @@ import {
 } from "@layoutit/polycss";
 import { logoUrl, tileTextureSets } from "./assets/voxjongAssets";
 import { useMahjongSession } from "./composables/useMahjongSession";
+import { clearSoundDurationMs, useSound } from "./composables/useSound";
 import { useVoxjongView } from "./composables/useVoxjongView";
 import { turtleCells, type GameTile } from "./game/mahjong";
 import {
@@ -27,6 +28,37 @@ type Vec3 = [number, number, number];
 const clickMoveTolerance = 11;
 const polyCameraZoomScale = 50;
 const polySceneViewportOffset = { x: -10, y: -37 };
+
+// Start-of-game "assemble the turtle" intro: each tile drops from off-screen
+// into its resting place via a one-time requestAnimationFrame physics loop
+// (gravity + a small bounce). Landing order follows the support graph so a tile
+// only touches down after the tiles beneath it have settled. Occlusion-hidden
+// faces are force-revealed while assembling (.is-assembling) so even
+// fully-buried inner tiles fall as solid pieces.
+const introTileDuration = 620; // base ms fall time per tile
+const introTileDurationJitter = 620; // wide, so tiles fall at varied speeds (rain)
+const introBaseSpread = 850; // ms window the ground-layer tiles rain across
+const introTileExtraSpread = 150; // ms of random slack above a stacked tile's earliest land
+// A supporting tile must be fully settled (bounce done) THIS long before the
+// tile resting on it touches down.
+const introSettleLead = 250;
+const introBounceScreenPx = 9; // screen px of the little bounce on contact
+const introBounceTime = 160; // ms of the bounce settle
+const introLandingMinGap = 55; // ms min gap between landing ticks (throttle)
+const introLandingSoundTarget = 30; // max landing ticks across the intro
+const introClearDuration = 380; // ms for a tile to fly off-screen
+// Sweep spans the chips-in-sack clip so the disappearance is timed to the sound.
+const introClearStagger = Math.max(80, clearSoundDurationMs - introClearDuration);
+// New Game board-clear direction: "down" drops the board off the bottom of the
+// screen; "right" (the original) slides it off the right edge.
+const introClearDirection: "down" | "right" = "down";
+const isAssembling = ref(false);
+// True from initial mount until the drop-in positions tiles off-screen, so the
+// un-textured board never flashes at rest while images preload.
+const boardPreparing = ref(false);
+let introPlans: IntroPlan[] = [];
+let introRafId: number | null = null;
+let introClearTimer: number | null = null;
 const turtleGridDimensions = computeTileGridDimensions(turtleCells);
 const themeStorageKey = "voxjong-theme";
 const themeMetaColors = {
@@ -127,6 +159,7 @@ const {
   isWon,
   selectedTile,
   timerLabel,
+  clockRunning,
   freeTileIds,
   hasMoves,
   hintedTileIds,
@@ -140,6 +173,24 @@ const {
   showHint: showGameHint,
   resetGame,
 } = useMahjongSession();
+
+const {
+  muted: isMuted,
+  preload: preloadSounds,
+  unlock: unlockSounds,
+  toggleMuted: toggleSound,
+  playSelect: playSelectSound,
+  playMatch: playMatchSound,
+  playLanding: playLandingSound,
+  playClear: playClearSound,
+} = useSound();
+
+const soundToggleLabel = computed(() =>
+  isMuted.value ? "Sound Off" : "Sound On"
+);
+const soundToggleAriaLabel = computed(() =>
+  isMuted.value ? "Unmute sound" : "Mute sound"
+);
 
 function applyThemePreference(preference: ThemeName): void {
   themePreference.value = preference;
@@ -196,6 +247,7 @@ function redoMove(): void {
   if (!redoGameMove()) {
     return;
   }
+  playMatchSound();
   clearSelectedTileVisual();
   clearHintTileVisual();
   sceneVersion.value += 1;
@@ -403,6 +455,9 @@ function showHint(): void {
 }
 
 function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
+  if (isAssembling.value) {
+    return;
+  }
   const selectedId = selectedTileId.value;
 
   if (hintedTileIds.value.length > 0) {
@@ -412,6 +467,7 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
   if (selectedId === tile.id) {
     selectedTileId.value = null;
     clearSelectedTileVisual();
+    playSelectSound();
     scheduleTileVisualRefresh();
     return;
   }
@@ -425,6 +481,7 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
   if (selectedId === null) {
     selectedTileId.value = tile.id;
     setSelectedTileVisual(tile, mesh);
+    playSelectSound();
     scheduleTileVisualRefresh();
     return;
   }
@@ -433,6 +490,7 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
   if (!selectedTile || selectedTile.removed) {
     selectedTileId.value = tile.id;
     setSelectedTileVisual(tile, mesh);
+    playSelectSound();
     scheduleTileVisualRefresh();
     return;
   }
@@ -440,6 +498,7 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
   if (removePair(selectedTile.id, tile.id)) {
     clearSelectedTileVisual();
     clearHintTileVisual();
+    playMatchSound();
     sceneVersion.value += 1;
     scheduleTileVisualRefresh();
     return;
@@ -447,10 +506,12 @@ function selectTile(tile: GameTile, mesh: HTMLElement | null): void {
 
   selectedTileId.value = tile.id;
   setSelectedTileVisual(tile, mesh);
+  playSelectSound();
   scheduleTileVisualRefresh();
 }
 
 function onScenePointerDown(event: PointerEvent): void {
+  unlockSounds();
   const target = event.target instanceof HTMLElement ? event.target : null;
   const mesh = resolveMeshElement(target);
   const downTile = resolveTileFromMesh(mesh);
@@ -532,11 +593,27 @@ function syncPolyMeshMetadata(
   tileMesh: TileMeshSpec,
   meshSignature = tileMeshSignature(tileMesh)
 ): void {
-  handle.element.dataset.tileId = String(tileMesh.tileId);
-  handle.element.dataset.tileCode = tileMesh.tileCode;
-  handle.element.dataset.selectable = String(tileMesh.selectable);
-  handle.element.dataset.removed = String(tileMesh.removed);
-  handle.element.dataset.meshSignature = meshSignature;
+  // Only write attributes that actually changed. Positions never change between
+  // games, so on a New Game reset almost everything here is identical (facename,
+  // occlusion, spans, selectability) — only the tile codes/textures differ.
+  // Guarding the writes keeps the reset from stalling the main thread (and
+  // avoids needless MutationObserver churn on data-texture-source / style).
+  const setData = (el: HTMLElement, key: string, value: string) => {
+    if (el.dataset[key] !== value) {
+      el.dataset[key] = value;
+    }
+  };
+  const setClass = (el: HTMLElement, cls: string, on: boolean) => {
+    if (el.classList.contains(cls) !== on) {
+      el.classList.toggle(cls, on);
+    }
+  };
+
+  setData(handle.element, "tileId", String(tileMesh.tileId));
+  setData(handle.element, "tileCode", tileMesh.tileCode);
+  setData(handle.element, "selectable", String(tileMesh.selectable));
+  setData(handle.element, "removed", String(tileMesh.removed));
+  setData(handle.element, "meshSignature", meshSignature);
 
   const faces = handle.element.querySelectorAll<HTMLElement>(
     "[data-poly-index]"
@@ -551,29 +628,43 @@ function syncPolyMeshMetadata(
     if (!data) {
       continue;
     }
-    face.setAttribute("data-facename", data.faceName);
-    face.dataset.faceKey = data.faceKey;
-    face.dataset.faceVisible = String(data.faceVisible);
-    face.dataset.tileId = String(data.tileId);
-    face.dataset.tileCode = data.tileCode;
-    face.dataset.selectable = String(data.selectable);
-    face.dataset.blocked = String(data.blocked);
-    face.dataset.removed = String(data.removed);
-    face.dataset.textureSet = data.textureSet;
-    face.dataset.textureSource = data.textureSource;
-    face.dataset.textureSourcePath = data.textureSourcePath;
+    if (face.getAttribute("data-facename") !== data.faceName) {
+      face.setAttribute("data-facename", data.faceName);
+    }
+    setData(face, "faceKey", data.faceKey);
+    setData(face, "faceVisible", String(data.faceVisible));
+    setData(face, "tileId", String(data.tileId));
+    setData(face, "tileCode", data.tileCode);
+    setData(face, "selectable", String(data.selectable));
+    setData(face, "blocked", String(data.blocked));
+    setData(face, "removed", String(data.removed));
+    setData(face, "textureSet", data.textureSet);
+    setData(face, "textureSource", data.textureSource);
+    setData(face, "textureSourcePath", data.textureSourcePath);
     if (data.spanStart !== undefined && data.spanEnd !== undefined) {
-      face.dataset.spanStart = String(data.spanStart);
-      face.dataset.spanEnd = String(data.spanEnd);
+      setData(face, "spanStart", String(data.spanStart));
+      setData(face, "spanEnd", String(data.spanEnd));
     } else {
       delete face.dataset.spanStart;
       delete face.dataset.spanEnd;
     }
-    face.classList.toggle("is-face-hidden", !data.faceVisible);
-    face.style.setProperty(
-      "--tile-texture-url",
-      data.faceName === "top" ? `url("${data.textureSource}")` : "none"
-    );
+    // A side face covering the tile's full extent on its axis is the clean
+    // "box wall"; the intro reveals these (+ the top) so buried tiles fall as
+    // whole boxes, while the partial-span duplicates stay hidden.
+    const isFullSpanSide =
+      data.faceName !== "top" &&
+      data.spanStart !== undefined &&
+      data.spanEnd !== undefined &&
+      (data.faceName === "left" || data.faceName === "right"
+        ? data.spanStart === data.gridY && data.spanEnd === data.gridY2
+        : data.spanStart === data.gridX && data.spanEnd === data.gridX2);
+    setClass(face, "is-full-span", isFullSpanSide);
+    setClass(face, "is-face-hidden", !data.faceVisible);
+    const url =
+      data.faceName === "top" ? `url("${data.textureSource}")` : "none";
+    if (face.style.getPropertyValue("--tile-texture-url") !== url) {
+      face.style.setProperty("--tile-texture-url", url);
+    }
   }
 }
 
@@ -692,6 +783,315 @@ function destroyPolyScene(): void {
   }
 }
 
+function preloadTileImages(): Promise<void> {
+  const urls = new Set<string>();
+  for (const tile of tiles.value) {
+    if (tile.removed) {
+      continue;
+    }
+    const url = tileTextureMap.value[tile.code];
+    if (url) {
+      urls.add(url);
+    }
+  }
+  const loads = [...urls].map(
+    (url) =>
+      new Promise<void>((resolve) => {
+        const img = new Image();
+        img.src = url;
+        // decode() warms the *decoded* bitmap cache so the symbol paints
+        // immediately mid-fall, instead of blank until the browser rasterizes.
+        const done = () => resolve();
+        img.decode().then(done, () => {
+          img.onload = done;
+          img.onerror = done;
+        });
+      })
+  );
+  // Cap the wait so one slow/broken image can't stall the intro indefinitely.
+  return Promise.race([
+    Promise.all(loads).then(() => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
+  ]);
+}
+
+// The screen-space displacement (px) a tile gets per 1px of a local translate
+// on the given axis. Used to solve for the X/Y combination that moves a tile
+// straight up the screen, whatever the camera angle is.
+function measureAxisVector(
+  el: HTMLElement,
+  axis: "X" | "Y",
+  test: number
+): { dx: number; dy: number } {
+  // Measure from a clean baseline: the element may already carry a transform
+  // (e.g. the off-screen sweep-out), which would poison the delta. Restore it
+  // afterwards so the caller's state is untouched.
+  const prev = el.style.transform;
+  el.style.transition = "none";
+  el.style.transform = "";
+  void document.body.offsetHeight;
+  const before = el.getBoundingClientRect();
+  el.style.transform = `translate${axis}(${test}px)`;
+  void document.body.offsetHeight;
+  const after = el.getBoundingClientRect();
+  el.style.transform = prev;
+  return {
+    dx: (after.left - before.left) / test,
+    dy: (after.top - before.top) / test,
+  };
+}
+
+type IntroPlan = {
+  el: HTMLElement;
+  startOffset: number; // px along the fall axis, off-screen above rest
+  bounceOffset: number; // px of the little bounce-up on contact
+  fallDelay: number; // ms before this tile starts falling
+  fallTime: number; // ms of the accelerating fall
+  landed: boolean;
+};
+
+function stopAssembleIntro(): void {
+  if (introRafId !== null) {
+    cancelAnimationFrame(introRafId);
+    introRafId = null;
+  }
+  for (const plan of introPlans) {
+    plan.el.style.willChange = "";
+    plan.el.style.transition = "";
+    plan.el.style.transform = "";
+  }
+  introPlans = [];
+  isAssembling.value = false;
+}
+
+// New Game exit: fling the current tiles off the side of the screen (kept
+// mounted) before the fresh board drops in. Uses the same screen-space
+// calibration so the sweep direction is correct at any camera angle.
+function runClearOut(onDone: () => void): void {
+  const reduceMotion =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+  const meshes: HTMLElement[] = [];
+  for (const tile of tiles.value) {
+    if (tile.removed) {
+      continue;
+    }
+    const handle = polyTileMeshHandles.get(tile.id);
+    if (handle) {
+      meshes.push(handle.element);
+    }
+  }
+  if (reduceMotion || meshes.length === 0) {
+    onDone();
+    return;
+  }
+
+  stopAssembleIntro();
+  if (introClearTimer !== null) {
+    window.clearTimeout(introClearTimer);
+    introClearTimer = null;
+  }
+  playClearSound();
+
+  const sample = meshes[0];
+  const vX = measureAxisVector(sample, "X", 200);
+  const vY = measureAxisVector(sample, "Y", 200);
+  const det = vX.dx * vY.dy - vY.dx * vX.dy;
+  // Screen displacement that carries a tile off the chosen edge.
+  const width = sceneRoot.value?.clientWidth || window.innerWidth;
+  const height = sceneRoot.value?.clientHeight || window.innerHeight;
+  const screenX = introClearDirection === "down" ? 0 : width * 1.25;
+  const screenY =
+    introClearDirection === "down" ? height * 1.4 : width * 0.15;
+  let localX = 0;
+  let localY = 0;
+  if (Math.abs(det) > 1e-6) {
+    localX = (screenX * vY.dy - screenY * vY.dx) / det;
+    localY = (screenY * vX.dx - screenX * vX.dy) / det;
+  }
+
+  // Sweep: rightmost tiles leave first.
+  const positioned = meshes.map((el) => ({
+    el,
+    x: el.getBoundingClientRect().left,
+  }));
+  const maxX = Math.max(...positioned.map((p) => p.x));
+  const minX = Math.min(...positioned.map((p) => p.x));
+  const span = Math.max(1, maxX - minX);
+
+  isAssembling.value = true;
+  for (const item of positioned) {
+    const delay =
+      ((maxX - item.x) / span) * introClearStagger + Math.random() * 40;
+    item.el.style.willChange = "transform";
+    item.el.style.transition = `transform ${introClearDuration}ms cubic-bezier(0.4, 0, 1, 1) ${delay}ms`;
+    item.el.style.transform = `translate3d(${localX}px, ${localY}px, 0)`;
+  }
+
+  introClearTimer = window.setTimeout(() => {
+    introClearTimer = null;
+    for (const item of positioned) {
+      item.el.style.willChange = "";
+      item.el.style.transition = "";
+      // Leave the off-screen transform; the drop-in intro overwrites it.
+    }
+    onDone();
+  }, introClearStagger + introClearDuration + 40);
+}
+
+function runAssembleIntro(): void {
+  stopAssembleIntro();
+  clockRunning.value = false; // don't count the intro; starts when it settles
+  const reduceMotion =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+  const activeTilesList = tiles.value.filter((tile) => !tile.removed);
+  if (activeTilesList.length === 0 || reduceMotion) {
+    boardPreparing.value = false; // show the (textured) board at rest
+    clockRunning.value = true; // no animation → board is ready immediately
+    return;
+  }
+  // Rain, not layers: schedule each tile's landing time from its support graph.
+  // A tile rests on the tiles directly beneath it (z-1, overlapping footprint);
+  // it may only touch down once every one of those has settled (landed + bounce)
+  // for introSettleLead ms. Tiles with no one landing on them are free to rain
+  // in whenever, at varied fall speeds — so it never looks lock-step.
+  const overlaps = (a: GameTile, b: GameTile) =>
+    a.gridX < b.gridX2 &&
+    a.gridX2 > b.gridX &&
+    a.gridY < b.gridY2 &&
+    a.gridY2 > b.gridY;
+
+  const maxFallTime = introTileDuration + introTileDurationJitter;
+  const landingTime = new Map<number, number>();
+  for (const tile of [...activeTilesList].sort((a, b) => a.z - b.z)) {
+    let earliest = maxFallTime; // can't land before it has finished falling
+    let supported = false;
+    for (const other of activeTilesList) {
+      if (other.z !== tile.z - 1 || !overlaps(tile, other)) {
+        continue;
+      }
+      supported = true;
+      const settled =
+        (landingTime.get(other.id) ?? 0) + introBounceTime + introSettleLead;
+      if (settled > earliest) {
+        earliest = settled;
+      }
+    }
+    const spread = supported ? introTileExtraSpread : introBaseSpread;
+    landingTime.set(tile.id, earliest + Math.random() * spread);
+  }
+
+  const plans: IntroPlan[] = [];
+  for (const tile of activeTilesList) {
+    const handle = polyTileMeshHandles.get(tile.id);
+    if (!handle) {
+      continue;
+    }
+    const fallTime = introTileDuration + Math.random() * introTileDurationJitter;
+    const land = landingTime.get(tile.id) ?? maxFallTime;
+    plans.push({
+      el: handle.element,
+      startOffset: 0,
+      bounceOffset: 0,
+      fallDelay: Math.max(0, land - fallTime),
+      fallTime,
+      landed: false,
+    });
+  }
+  if (plans.length === 0) {
+    return;
+  }
+
+  // Calibrate the straight-up-the-screen direction, then start every tile a
+  // full viewport above its resting place (off-screen), whatever the camera
+  // angle/units are.
+  const sample = plans[0].el;
+  const vX = measureAxisVector(sample, "X", 200);
+  const vY = measureAxisVector(sample, "Y", 200);
+  // Solve a·vX + b·vY = (0, -1): the local X/Y translate that moves a tile
+  // straight UP the screen by 1px. No Z — a large translateZ breaks the symbol
+  // paint under perspective and barely moves center tiles. (upX, upY) is that
+  // per-pixel direction, shared by all tiles.
+  const det = vX.dx * vY.dy - vY.dx * vX.dy;
+  let upX = 0;
+  let upY = -1;
+  if (Math.abs(det) > 1e-6) {
+    upX = vY.dx / det;
+    upY = -vX.dx / det;
+  } else if (Math.abs(vY.dy) > 1e-6) {
+    upY = -1 / vY.dy;
+  }
+  const viewportHeight = sceneRoot.value?.clientHeight || window.innerHeight;
+  const baseOffset = viewportHeight * 1.3; // screen px above rest (off-screen)
+
+  const applyOffset = (el: HTMLElement, px: number) => {
+    el.style.transform = `translate3d(${upX * px}px, ${upY * px}px, 0)`;
+  };
+
+  for (const plan of plans) {
+    plan.startOffset = baseOffset * (1 + Math.random() * 0.18);
+    plan.bounceOffset = introBounceScreenPx;
+    plan.el.style.willChange = "transform";
+    plan.el.style.transition = "none";
+    applyOffset(plan.el, plan.startOffset);
+  }
+  void document.body.offsetHeight;
+
+  introPlans = plans;
+  isAssembling.value = true;
+  boardPreparing.value = false; // tiles are off-screen now — safe to reveal
+  let lastSoundAt = -Infinity;
+  let soundsPlayed = 0;
+  const startTime = performance.now();
+
+  const step = (now: number) => {
+    const time = now - startTime;
+    let allDone = true;
+
+    for (const plan of plans) {
+      const local = time - plan.fallDelay;
+      let offset: number;
+      if (local <= 0) {
+        offset = plan.startOffset;
+        allDone = false;
+      } else if (local < plan.fallTime) {
+        // Accelerating fall: distance fallen grows with the square of time.
+        const progress = local / plan.fallTime;
+        offset = plan.startOffset * (1 - progress * progress);
+        allDone = false;
+      } else if (local < plan.fallTime + introBounceTime) {
+        // Contact: fire a throttled click, then a small damped bounce.
+        if (!plan.landed) {
+          plan.landed = true;
+          if (
+            now - lastSoundAt > introLandingMinGap &&
+            soundsPlayed < introLandingSoundTarget
+          ) {
+            playLandingSound();
+            lastSoundAt = now;
+            soundsPlayed += 1;
+          }
+        }
+        const bounce = (local - plan.fallTime) / introBounceTime; // 0..1
+        offset = plan.bounceOffset * Math.sin(Math.PI * bounce) * (1 - bounce);
+        allDone = false;
+      } else {
+        offset = 0;
+      }
+      applyOffset(plan.el, offset);
+    }
+
+    if (allDone) {
+      stopAssembleIntro();
+      clockRunning.value = true; // last piece landed → start the clock
+      return;
+    }
+    introRafId = requestAnimationFrame(step);
+  };
+  introRafId = requestAnimationFrame(step);
+}
+
 function mountPolyScene(): void {
   const root = sceneRoot.value;
   if (!root) {
@@ -724,12 +1124,26 @@ function mountPolyScene(): void {
   scheduleDirectTileTextureStylesSync();
 }
 
+function unlockAudioOnFirstGesture(): void {
+  const unlock = () => {
+    unlockSounds();
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+  };
+  window.addEventListener("pointerdown", unlock);
+  window.addEventListener("keydown", unlock);
+}
+
 onMounted(() => {
   applyThemePreference(readStoredThemePreference() ?? "light");
+  preloadSounds();
+  unlockAudioOnFirstGesture();
+  boardPreparing.value = true; // hide the board until the first drop-in
   requestAnimationFrame(() => {
     clampCurrentView();
     mountPolyScene();
     refreshTileVisuals();
+    void preloadTileImages().then(() => runAssembleIntro());
   });
 });
 
@@ -737,6 +1151,11 @@ onBeforeUnmount(() => {
   destroyPolyScene();
   clearSelectedTileVisual();
   clearHintTileVisual();
+  stopAssembleIntro();
+  if (introClearTimer !== null) {
+    window.clearTimeout(introClearTimer);
+    introClearTimer = null;
+  }
   if (refreshRafId !== null) {
     cancelAnimationFrame(refreshRafId);
     refreshRafId = null;
@@ -744,13 +1163,22 @@ onBeforeUnmount(() => {
 });
 
 function newGame(): void {
-  sceneVersion.value += 1;
-  resetGame();
-  resetGestureState();
-  pointerStart.value = null;
+  unlockSounds();
+  clockRunning.value = false; // freeze the clock through sweep + drop-in
   clearSelectedTileVisual();
   clearHintTileVisual();
-  scheduleTileVisualRefresh();
+  // Sweep the CURRENT (textured) board off-screen, then reset + drop the new
+  // one in once the tiles are gone. Resetting is deferred to onDone so the
+  // sweep animates the old board, not a blank not-yet-textured one.
+  // resetGame() replaces the tiles array, which already triggers the mesh
+  // re-sync — bumping sceneVersion too would run that heavy sync a second time.
+  runClearOut(() => {
+    resetGame();
+    resetGestureState();
+    pointerStart.value = null;
+    scheduleTileVisualRefresh();
+    void nextTick(() => runAssembleIntro());
+  });
 }
 
 const tileMeshes = computed(() => {
@@ -807,6 +1235,7 @@ watch(
     <section
       ref="sceneRoot"
       class="scene"
+      :class="{ 'is-assembling': isAssembling, 'is-preparing': boardPreparing }"
       @pointerdown.capture="onScenePointerDown"
       @pointermove.capture="onScenePointerMove"
       @pointerup.capture="onScenePointerUp"
@@ -858,6 +1287,47 @@ watch(
           <span v-else class="chip-button-suit" aria-hidden="true"
             >&spades;</span
           >
+        </button>
+        <button
+          type="button"
+          class="chip chip--button chip--sound"
+          :class="{ 'is-muted': isMuted }"
+          :aria-label="soundToggleAriaLabel"
+          :aria-pressed="!isMuted"
+          @click="toggleSound"
+        >
+          <span class="chip-button-label">{{ soundToggleLabel }}</span>
+          <svg
+            class="chip-button-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+          >
+            <path
+              fill="currentColor"
+              d="M4 9v6h4l5 5V4L8 9H4z"
+            />
+            <template v-if="isMuted">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                d="M16 9l5 6M21 9l-5 6"
+              />
+            </template>
+            <template v-else>
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"
+              />
+            </template>
+          </svg>
         </button>
         <div class="move-controls">
           <button
