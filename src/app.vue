@@ -22,6 +22,12 @@ import {
   type TileMeshSpec,
   type TilePolygonData,
 } from "./render/voxels";
+import {
+  defaultTileArtTransform,
+  majorityTileTopArtBasis,
+  parseCssTransform2dBasis,
+  tileArtTransformForBasis,
+} from "./render/tileArtOrientation";
 
 type ThemeName = "light" | "dark";
 type Vec3 = [number, number, number];
@@ -416,7 +422,7 @@ function refreshHintVisual(): void {
   }
 }
 
-function syncDirectTileTextureStyles(): void {
+function syncDirectTileTopArtStyles(): void {
   const root = sceneRoot.value;
   if (!root) {
     return;
@@ -424,7 +430,16 @@ function syncDirectTileTextureStyles(): void {
   const topFaces = root.querySelectorAll<HTMLElement>(
     '[data-facename="top"][data-texture-source]'
   );
-  for (const face of topFaces) {
+  const topFaceEntries = Array.from(topFaces).map((face) => {
+    return {
+      face,
+      basis: parseCssTransform2dBasis(face.style.transform),
+    };
+  });
+  const referenceBasis = majorityTileTopArtBasis(
+    topFaceEntries.map((entry) => entry.basis)
+  );
+  for (const { face, basis } of topFaceEntries) {
     const textureSource = face.dataset.textureSource;
     if (!textureSource) {
       continue;
@@ -433,21 +448,27 @@ function syncDirectTileTextureStyles(): void {
     if (face.style.getPropertyValue("--tile-texture-url") !== textureUrl) {
       face.style.setProperty("--tile-texture-url", textureUrl);
     }
+    const artTransform = tileArtTransformForBasis(basis, referenceBasis);
+    if (
+      face.style.getPropertyValue("--tile-art-transform") !== artTransform
+    ) {
+      face.style.setProperty("--tile-art-transform", artTransform);
+    }
   }
 }
 
-function scheduleDirectTileTextureStylesSync(): void {
+function scheduleDirectTileTopArtStylesSync(): void {
   if (tileTextureRefreshRafId !== null) {
     return;
   }
   tileTextureRefreshRafId = requestAnimationFrame(() => {
     tileTextureRefreshRafId = null;
-    syncDirectTileTextureStyles();
+    syncDirectTileTopArtStyles();
   });
 }
 
 function refreshTileVisuals(): void {
-  syncDirectTileTextureStyles();
+  syncDirectTileTopArtStyles();
   syncTileInteractivity();
   refreshSelectionVisual();
   refreshHintVisual();
@@ -681,6 +702,13 @@ function syncPolyMeshMetadata(
       data.faceName === "top" ? `url("${data.textureSource}")` : "none";
     if (face.style.getPropertyValue("--tile-texture-url") !== url) {
       face.style.setProperty("--tile-texture-url", url);
+    }
+    const artTransform =
+      data.faceName === "top" ? defaultTileArtTransform : "none";
+    if (
+      face.style.getPropertyValue("--tile-art-transform") !== artTransform
+    ) {
+      face.style.setProperty("--tile-art-transform", artTransform);
     }
   }
 }
@@ -1143,7 +1171,7 @@ function mountPolyScene(): void {
     textureLeafSizing: "local",
     seamBleed: 0.1,
   });
-  tileTextureObserver = new MutationObserver(scheduleDirectTileTextureStylesSync);
+  tileTextureObserver = new MutationObserver(scheduleDirectTileTopArtStylesSync);
   tileTextureObserver.observe(root, {
     childList: true,
     subtree: true,
@@ -1152,7 +1180,7 @@ function mountPolyScene(): void {
   });
   syncPolyTileMeshes();
   syncPolyCamera();
-  scheduleDirectTileTextureStylesSync();
+  scheduleDirectTileTopArtStylesSync();
 }
 
 function unlockAudioOnFirstGesture(): void {

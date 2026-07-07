@@ -322,7 +322,7 @@
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
-  transform: rotate(180deg);
+  transform: var(--tile-art-transform, rotate(180deg));
   transform-origin: center;
   pointer-events: none;
 }
