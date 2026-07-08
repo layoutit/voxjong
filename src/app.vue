@@ -184,20 +184,7 @@ const {
   redoMove: redoGameMove,
   showHint: showGameHint,
   resetGame,
-  autoSolve,
 } = useMahjongSession();
-
-const isDevBuild = import.meta.env.DEV;
-
-function devSolve(): void {
-  if (isAssembling.value) {
-    return;
-  }
-  autoSolve(); // remove all but the final pair
-  clearSelectedTileVisual();
-  clearHintTileVisual();
-  scheduleTileVisualRefresh();
-}
 
 const {
   muted: isMuted,
@@ -1355,17 +1342,6 @@ watch(isWon, (won) => {
         >
           <span class="chip-button-label">Hints</span>
           <span class="chip-button-suit" aria-hidden="true">&diamondsuit;</span>
-        </button>
-        <button
-          v-if="isDevBuild"
-          type="button"
-          class="chip chip--button"
-          :disabled="remainingTiles <= 2"
-          title="Dev: remove all but the last pair"
-          @click="devSolve"
-        >
-          <span class="chip-button-label">Solve</span>
-          <span class="chip-button-suit" aria-hidden="true">&#9889;</span>
         </button>
         <button
           type="button"

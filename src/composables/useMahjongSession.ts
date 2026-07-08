@@ -211,19 +211,6 @@ export function useMahjongSession() {
     restartTimer();
   }
 
-  // Dev helper: fast-forward the guaranteed-solvable removal order, stopping
-  // with `leave` tiles still on the board (default 2 = the final pair) so the
-  // victory can be triggered by a couple of real clicks.
-  function autoSolve(leave = 2): void {
-    clearSelectionAndHintState();
-    for (const [firstId, secondId] of removalOrder.value) {
-      if (remainingTiles.value <= leave) {
-        break;
-      }
-      removePair(firstId, secondId);
-    }
-  }
-
   onMounted(startTimer);
   onBeforeUnmount(stopTimer);
 
@@ -249,6 +236,5 @@ export function useMahjongSession() {
     redoMove,
     showHint,
     resetGame,
-    autoSolve,
   };
 }
