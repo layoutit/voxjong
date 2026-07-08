@@ -3,6 +3,7 @@ import {
   defaultTileArtTransform,
   majorityTileTopArtBasis,
   parseCssTransform2dBasis,
+  selectTileTopArtReferenceBasis,
   tileArtTransformForBasis,
   tileTopArtBasisKey,
 } from "./tileArtOrientation";
@@ -65,6 +66,30 @@ describe("tile top art orientation", () => {
 
     expect(
       tileTopArtBasisKey(majorityTileTopArtBasis([outlier, majority, majority])!)
+    ).toBe("0.000,1.000,-1.000,0.000");
+  });
+
+  it("keeps the existing reference when reflected faces become the majority", () => {
+    const reflected = parseCssTransform2dBasis("matrix(0, 1, 1, 0, 0, 0)");
+    const reference = parseCssTransform2dBasis("matrix(0, 1, -1, 0, 0, 0)");
+    const bases = [
+      ...Array.from({ length: 47 }, () => reflected),
+      ...Array.from({ length: 45 }, () => reference),
+    ];
+
+    expect(
+      tileTopArtBasisKey(selectTileTopArtReferenceBasis(bases, reference)!)
+    ).toBe("0.000,1.000,-1.000,0.000");
+  });
+
+  it("keeps the previous reference if only reflected faces remain", () => {
+    const reflected = parseCssTransform2dBasis("matrix(0, 1, 1, 0, 0, 0)");
+    const reference = parseCssTransform2dBasis("matrix(0, 1, -1, 0, 0, 0)");
+
+    expect(
+      tileTopArtBasisKey(
+        selectTileTopArtReferenceBasis([reflected, reflected], reference)!
+      )
     ).toBe("0.000,1.000,-1.000,0.000");
   });
 });

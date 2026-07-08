@@ -8,6 +8,7 @@ export const defaultTileArtTransform = "rotate(180deg)";
 const cssMatrixValuePattern = /matrix(?:3d)?\(([^)]+)\)/;
 const axisEpsilon = 1e-6;
 const matrixEpsilon = 1e-5;
+const referenceContinuityMinimum = 1.25;
 
 function normalizeAxis(x: number, y: number): [number, number] | null {
   const length = Math.hypot(x, y);
@@ -85,6 +86,62 @@ export function majorityTileTopArtBasis(
     }
   }
   return majority?.basis ?? null;
+}
+
+function tileTopArtBasisAlignment(
+  basis: TileTopArtBasis,
+  referenceBasis: TileTopArtBasis
+): number {
+  return (
+    basis.xAxis[0] * referenceBasis.xAxis[0] +
+    basis.xAxis[1] * referenceBasis.xAxis[1] +
+    basis.yAxis[0] * referenceBasis.yAxis[0] +
+    basis.yAxis[1] * referenceBasis.yAxis[1]
+  );
+}
+
+export function selectTileTopArtReferenceBasis(
+  bases: ReadonlyArray<TileTopArtBasis | null>,
+  previousBasis: TileTopArtBasis | null
+): TileTopArtBasis | null {
+  if (!previousBasis) {
+    return majorityTileTopArtBasis(bases);
+  }
+
+  const counts = new Map<
+    string,
+    { basis: TileTopArtBasis; count: number; alignment: number }
+  >();
+  for (const basis of bases) {
+    if (!basis) {
+      continue;
+    }
+    const key = tileTopArtBasisKey(basis);
+    const alignment = tileTopArtBasisAlignment(basis, previousBasis);
+    const entry = counts.get(key);
+    if (entry) {
+      entry.count += 1;
+    } else {
+      counts.set(key, { basis, count: 1, alignment });
+    }
+  }
+
+  let closest: { basis: TileTopArtBasis; count: number; alignment: number } | null =
+    null;
+  for (const entry of counts.values()) {
+    if (
+      !closest ||
+      entry.alignment > closest.alignment ||
+      (entry.alignment === closest.alignment && entry.count > closest.count)
+    ) {
+      closest = entry;
+    }
+  }
+
+  if (closest && closest.alignment >= referenceContinuityMinimum) {
+    return closest.basis;
+  }
+  return previousBasis;
 }
 
 export function tileArtTransformForBasis(

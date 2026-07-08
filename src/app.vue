@@ -24,9 +24,10 @@ import {
 } from "./render/voxels";
 import {
   defaultTileArtTransform,
-  majorityTileTopArtBasis,
   parseCssTransform2dBasis,
+  selectTileTopArtReferenceBasis,
   tileArtTransformForBasis,
+  type TileTopArtBasis,
 } from "./render/tileArtOrientation";
 
 type ThemeName = "light" | "dark";
@@ -65,6 +66,7 @@ const isAssembling = ref(false);
 const boardPreparing = ref(false);
 let introPlans: IntroPlan[] = [];
 let introClearAnim: ReturnType<typeof animate> | null = null;
+let tileTopArtReferenceBasis: TileTopArtBasis | null = null;
 // Bumped whenever a fresh intro sequence begins (mount / New Game); a pending
 // async first-load intro checks it so it can't fire after being superseded.
 let introGeneration = 0;
@@ -436,9 +438,11 @@ function syncDirectTileTopArtStyles(): void {
       basis: parseCssTransform2dBasis(face.style.transform),
     };
   });
-  const referenceBasis = majorityTileTopArtBasis(
-    topFaceEntries.map((entry) => entry.basis)
+  const referenceBasis = selectTileTopArtReferenceBasis(
+    topFaceEntries.map((entry) => entry.basis),
+    tileTopArtReferenceBasis
   );
+  tileTopArtReferenceBasis = referenceBasis;
   for (const { face, basis } of topFaceEntries) {
     const textureSource = face.dataset.textureSource;
     if (!textureSource) {
@@ -807,6 +811,7 @@ function syncPolyTileMeshes(nextTileMeshes = tileMeshes.value): void {
 
 function destroyPolyScene(): void {
   polyTileMeshHandles.clear();
+  tileTopArtReferenceBasis = null;
   tileTextureObserver?.disconnect();
   tileTextureObserver = null;
   polySceneHandle?.destroy();
@@ -1248,6 +1253,7 @@ function newGame(): void {
   // re-sync — bumping sceneVersion too would run that heavy sync a second time.
   runClearOut(() => {
     resetGame();
+    tileTopArtReferenceBasis = null;
     resetGestureState();
     pointerStart.value = null;
     scheduleTileVisualRefresh();
