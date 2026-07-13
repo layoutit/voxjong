@@ -88,9 +88,11 @@ export type MoveRecord = {
   secondId: number;
 };
 
-export function shuffle<T>(list: T[]): T[] {
+export type RandomSource = () => number;
+
+export function shuffle<T>(list: T[], random: RandomSource = Math.random): T[] {
   for (let i = list.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [list[i], list[j]] = [list[j] as T, list[i] as T];
   }
   return list;
@@ -188,7 +190,9 @@ export const turtleCells: TileBounds[] = turtleCoords.map((coord, index) => {
   };
 });
 
-export function createPairBag(): Array<[TileCode, TileCode]> {
+export function createPairBag(
+  random: RandomSource = Math.random
+): Array<[TileCode, TileCode]> {
   const pairs: Array<[TileCode, TileCode]> = [];
   for (const suit of ["Man", "Pin", "Sou"] as const) {
     for (let value = 1; value <= 9; value += 1) {
@@ -207,23 +211,19 @@ export function createPairBag(): Array<[TileCode, TileCode]> {
   ] as const) {
     pairs.push([honor, honor], [honor, honor]);
   }
-  const [flowerA, flowerB, flowerC, flowerD] = shuffle([
-    "Flower1",
-    "Flower2",
-    "Flower3",
-    "Flower4",
-  ]);
+  const [flowerA, flowerB, flowerC, flowerD] = shuffle<TileCode>(
+    ["Flower1", "Flower2", "Flower3", "Flower4"],
+    random
+  );
   if (!flowerA || !flowerB || !flowerC || !flowerD) {
     throw new Error("Flower tile bag expected 4 tiles.");
   }
   pairs.push([flowerA, flowerB], [flowerC, flowerD]);
 
-  const [seasonA, seasonB, seasonC, seasonD] = shuffle([
-    "Season1",
-    "Season2",
-    "Season3",
-    "Season4",
-  ]);
+  const [seasonA, seasonB, seasonC, seasonD] = shuffle<TileCode>(
+    ["Season1", "Season2", "Season3", "Season4"],
+    random
+  );
   if (!seasonA || !seasonB || !seasonC || !seasonD) {
     throw new Error("Season tile bag expected 4 tiles.");
   }
@@ -232,12 +232,13 @@ export function createPairBag(): Array<[TileCode, TileCode]> {
   if (pairs.length !== 72) {
     throw new Error(`Tile pair bag expected 72 pairs, got ${pairs.length}`);
   }
-  return shuffle(pairs);
+  return shuffle(pairs, random);
 }
 
 export function createSolvableRemovalPairs(
   cells: TileBounds[],
-  attempts = 400
+  attempts = 400,
+  random: RandomSource = Math.random
 ): Array<[number, number]> {
   const expectedPairs = cells.length / 2;
   const allIds = cells.map((cell) => cell.id);
@@ -249,14 +250,14 @@ export function createSolvableRemovalPairs(
 
     while (remaining.size > 0) {
       const active = cells.filter((cell) => remaining.has(cell.id));
-      const free = shuffle(getFreeTileIds(active));
+      const free = shuffle(getFreeTileIds(active), random);
       if (free.length < 2) {
         failed = true;
         break;
       }
 
       const first = free[0];
-      const second = free[1 + Math.floor(Math.random() * (free.length - 1))];
+      const second = free[1 + Math.floor(random() * (free.length - 1))];
       if (first === undefined || second === undefined) {
         failed = true;
         break;
@@ -282,9 +283,9 @@ export type GameDeal = {
   removalOrder: Array<[number, number]>;
 };
 
-export function createGameDeal(): GameDeal {
-  const removalPairs = createSolvableRemovalPairs(turtleCells);
-  const codePairs = createPairBag();
+export function createGameDeal(random: RandomSource = Math.random): GameDeal {
+  const removalPairs = createSolvableRemovalPairs(turtleCells, 400, random);
+  const codePairs = createPairBag(random);
   if (removalPairs.length !== codePairs.length) {
     throw new Error(
       `Mismatch between removable pairs (${removalPairs.length}) and code pairs (${codePairs.length}).`

@@ -16,6 +16,11 @@ import { clearSoundDurationMs, useSound } from "./composables/useSound";
 import { useVoxjongView } from "./composables/useVoxjongView";
 import { turtleCells, type GameTile } from "./game/mahjong";
 import {
+  parseGameUrlHash,
+  writeGameUrlState,
+  type GameUrlHistoryMode,
+} from "./game/urlState";
+import {
   computeTileGridDimensions,
   createTileMeshSpecs,
   tilePalettes,
@@ -38,20 +43,20 @@ const polyCameraZoomScale = 50;
 const polySceneViewportOffset = { x: -10, y: -37 };
 
 // Start-of-game "assemble the turtle" intro: each tile drops from off-screen
-// into its resting place via a one-time requestAnimationFrame physics loop
-// (gravity + a small bounce). Landing order follows the support graph so a tile
+// into its resting place via a one-time mesh-transform fall. Landing order
+// follows the support graph so a tile
 // only touches down after the tiles beneath it have settled. Occlusion-hidden
 // faces are force-revealed while assembling (.is-assembling) so even
 // fully-buried inner tiles fall as solid pieces.
-const introTileDuration = 620; // base ms fall time per tile
-const introTileDurationJitter = 620; // wide, so tiles fall at varied speeds (rain)
+const introTileDuration = 300; // base ms fall time per tile
+const introTileDurationJitter = 300; // varied speeds keep the rain organic
 const introBaseSpread = 850; // ms window the ground-layer tiles rain across
-const introTileExtraSpread = 150; // ms of random slack above a stacked tile's earliest land
-// A supporting tile must be fully settled (bounce done) THIS long before the
-// tile resting on it touches down.
-const introSettleLead = 250;
-const introBounceScreenPx = 9; // screen px of the little bounce on contact
-const introBounceTime = 160; // ms of the bounce settle
+const introTileExtraSpread = 40; // ms of stacked-tile landing slack
+const introBounceScreenPx = 6; // subtle contact lift
+const introBounceTime = 160; // up-and-down settle
+const introSupportLandingGap = introBounceTime + 10;
+const introViewportEntryGap = 8; // screen px kept above the top edge
+const introOffscreenStartDistance = 180; // px beyond the fully hidden tile
 const introLandingMinGap = 55; // ms min gap between landing ticks (throttle)
 const introLandingSoundMax = 30; // max landing ticks across the intro
 const introClearDuration = 380; // ms for a tile to fly off-screen
@@ -66,6 +71,7 @@ const isAssembling = ref(false);
 const boardPreparing = ref(false);
 let introPlans: IntroPlan[] = [];
 let introClearAnim: ReturnType<typeof animate> | null = null;
+let introClearMeshes: HTMLElement[] = [];
 let tileTopArtReferenceBasis: TileTopArtBasis | null = null;
 // Bumped whenever a fresh intro sequence begins (mount / New Game); a pending
 // async first-load intro checks it so it can't fire after being superseded.
@@ -96,6 +102,11 @@ let polySceneHandle: PolySceneHandle | null = null;
 const polyTileMeshHandles = new Map<number, PolyMeshHandle>();
 let tileTextureObserver: MutationObserver | null = null;
 let tileTextureRefreshRafId: number | null = null;
+let pendingGameUrlHistoryMode: GameUrlHistoryMode = "replace";
+let restoringGameFromHistory = false;
+
+const initialGameUrlState =
+  typeof window === "undefined" ? null : parseGameUrlHash(window.location.hash);
 
 const themePreference = ref<ThemeName>("light");
 const resolvedTheme = ref<ThemeName>("light");
@@ -177,14 +188,16 @@ const {
   hintedTileIds,
   canUndo,
   canRedo,
+  gameUrlState,
   clearHintState: clearGameHintState,
   clearSelectionAndHintState: clearGameSelectionAndHintState,
   removePair,
   undoMove: undoGameMove,
   redoMove: redoGameMove,
   showHint: showGameHint,
+  restoreGame,
   resetGame,
-} = useMahjongSession();
+} = useMahjongSession(initialGameUrlState);
 
 const {
   muted: isMuted,
@@ -889,7 +902,6 @@ function measureAxisVector(
 type IntroPlan = {
   el: HTMLElement;
   startOffset: number; // px along the fall axis, off-screen above rest
-  bounceOffset: number; // px of the little bounce-up on contact
   fallDelay: number; // ms before this tile starts falling
   fallTime: number; // ms of the accelerating fall
 };
@@ -903,6 +915,20 @@ function stopAssembleIntro(): void {
   }
   introPlans = [];
   isAssembling.value = false;
+}
+
+function stopClearOut(): void {
+  const clearAnim = introClearAnim;
+  introClearAnim = null;
+  clearAnim?.cancel();
+
+  for (const mesh of introClearMeshes) {
+    utils.remove(mesh);
+    mesh.style.willChange = "";
+    mesh.style.transition = "";
+    mesh.style.transform = "";
+  }
+  introClearMeshes = [];
 }
 
 // New Game exit: fling the current tiles off the side of the screen (kept
@@ -932,10 +958,7 @@ function runClearOut(onDone: () => void): void {
   }
 
   stopAssembleIntro();
-  if (introClearAnim) {
-    introClearAnim.cancel();
-    introClearAnim = null;
-  }
+  stopClearOut();
   playClearSound();
 
   const sample = meshes[0];
@@ -969,7 +992,7 @@ function runClearOut(onDone: () => void): void {
     item.el.style.willChange = "transform";
   }
   // anime.js staggered sweep — rightmost tiles leave first.
-  introClearAnim = animate(meshes, {
+  const clearAnim = animate(meshes, {
     translateX: localX,
     translateY: localY,
     duration: introClearDuration,
@@ -978,8 +1001,14 @@ function runClearOut(onDone: () => void): void {
       Math.random() * 40,
     ease: "inQuad",
   });
-  void introClearAnim.then(() => {
+  introClearAnim = clearAnim;
+  introClearMeshes = meshes;
+  void clearAnim.then(() => {
+    if (introClearAnim !== clearAnim) {
+      return;
+    }
     introClearAnim = null;
+    introClearMeshes = [];
     for (const item of positioned) {
       item.el.style.willChange = "";
       // Leave the off-screen transform; the drop-in intro overwrites it.
@@ -1002,9 +1031,9 @@ function runAssembleIntro(): void {
   }
   // Rain, not layers: schedule each tile's landing time from its support graph.
   // A tile rests on the tiles directly beneath it (z-1, overlapping footprint);
-  // it may only touch down once every one of those has settled (landed + bounce)
-  // for introSettleLead ms. Tiles with no one landing on them are free to rain
-  // in whenever, at varied fall speeds — so it never looks lock-step.
+  // it may only touch down after every one of those has landed. Tiles with no
+  // one beneath them are free to rain in whenever, at varied fall speeds — so
+  // it never looks lock-step.
   const overlaps = (a: GameTile, b: GameTile) =>
     a.gridX < b.gridX2 &&
     a.gridX2 > b.gridX &&
@@ -1022,7 +1051,7 @@ function runAssembleIntro(): void {
       }
       supported = true;
       const settled =
-        (landingTime.get(other.id) ?? 0) + introBounceTime + introSettleLead;
+        (landingTime.get(other.id) ?? 0) + introSupportLandingGap;
       if (settled > earliest) {
         earliest = settled;
       }
@@ -1042,7 +1071,6 @@ function runAssembleIntro(): void {
     plans.push({
       el: handle.element,
       startOffset: 0,
-      bounceOffset: 0,
       fallDelay: Math.max(0, land - fallTime),
       fallTime,
     });
@@ -1054,9 +1082,16 @@ function runAssembleIntro(): void {
     return;
   }
 
-  // Calibrate the straight-up-the-screen direction, then start every tile a
-  // full viewport above its resting place (off-screen), whatever the camera
-  // angle/units are.
+  // The randomized landing schedule can otherwise leave a dead beat before
+  // the first tile even starts. Shift the whole schedule equally so one tile
+  // begins immediately while all relative landing gaps/order stay unchanged.
+  const introLeadDelay = Math.min(...plans.map((plan) => plan.fallDelay));
+  for (const plan of plans) {
+    plan.fallDelay -= introLeadDelay;
+  }
+
+  // Calibrate the straight-up-the-screen direction, then start every tile
+  // safely above the viewport, whatever the camera angle/units are.
   const sample = plans[0].el;
   const vX = measureAxisVector(sample, "X", 200);
   const vY = measureAxisVector(sample, "Y", 200);
@@ -1073,14 +1108,24 @@ function runAssembleIntro(): void {
   } else if (Math.abs(vY.dy) > 1e-6) {
     upY = -1 / vY.dy;
   }
-  const viewportHeight = sceneRoot.value?.clientHeight || window.innerHeight;
-  const baseOffset = viewportHeight * 1.3; // screen px above rest (off-screen)
-
-  // Park every tile off-screen along the calibrated up-direction; anime.js owns
-  // the transform from here.
+  // Park every tile fully off-screen along the calibrated up-direction;
+  // anime.js owns the transform from here.
   for (const plan of plans) {
-    plan.startOffset = baseOffset * (1 + Math.random() * 0.18);
-    plan.bounceOffset = introBounceScreenPx;
+    // New Game's clear-out deliberately leaves a transform behind. Measure the
+    // whole rendered tile at rest so even its lowest side face starts hidden.
+    plan.el.style.transform = "";
+    const renderedFaces = Array.from(
+      plan.el.querySelectorAll<HTMLElement>("[data-facename]")
+    );
+    const restingBottom = renderedFaces.reduce(
+      (bottom, face) => Math.max(bottom, face.getBoundingClientRect().bottom),
+      plan.el.getBoundingClientRect().bottom
+    );
+    const viewportEntryOffset = Math.max(
+      introViewportEntryGap,
+      restingBottom + introViewportEntryGap
+    );
+    plan.startOffset = viewportEntryOffset + introOffscreenStartDistance;
     plan.el.style.willChange = "transform";
     utils.set(plan.el, {
       translateX: upX * plan.startOffset,
@@ -1109,17 +1154,16 @@ function runAssembleIntro(): void {
   };
 
   for (const plan of plans) {
-    const bounceX = upX * plan.bounceOffset;
-    const bounceY = upY * plan.bounceOffset;
-    // Accelerating fall (gravity), then a small settle bounce. fallDelay/fallTime
-    // come from the support graph above, so a tile only lands once the tiles
-    // beneath it are settled.
+    const bounceX = upX * introBounceScreenPx;
+    const bounceY = upY * introBounceScreenPx;
+    // One uninterrupted fall crosses the viewport boundary at constant speed;
+    // there is no tween handoff there for tiles to bunch around.
     animate(plan.el, {
       translateX: 0,
       translateY: 0,
       delay: plan.fallDelay,
       duration: plan.fallTime,
-      ease: "inQuad",
+      ease: "linear",
       onComplete: () => {
         fireLanding(); // contact
         animate(plan.el, {
@@ -1186,37 +1230,42 @@ function unlockAudioOnFirstGesture(): void {
   window.addEventListener("keydown", unlock, { once: true });
 }
 
+function writeCurrentGameUrl(mode: GameUrlHistoryMode = "replace"): void {
+  if (restoringGameFromHistory) {
+    return;
+  }
+  writeGameUrlState(gameUrlState.value, mode);
+}
+
 onMounted(() => {
   applyThemePreference(readStoredThemePreference() ?? "light");
   preloadSounds();
   unlockAudioOnFirstGesture();
+  window.addEventListener("popstate", restoreGameFromHistory);
   boardPreparing.value = true; // hide the board until the first drop-in
   const generation = ++introGeneration;
   requestAnimationFrame(() => {
     clampCurrentView();
     mountPolyScene();
     refreshTileVisuals();
-    // Skip this first-load intro if a New Game (or unmount) superseded it while
-    // images were preloading.
-    void preloadTileImages().then(() => {
-      if (generation === introGeneration) {
-        runAssembleIntro();
-      }
-    });
+    // Warm decoded tile images in parallel. The off-screen fall gives them time
+    // to become ready without leaving the board blank while every image waits.
+    void preloadTileImages();
+    if (generation === introGeneration) {
+      runAssembleIntro();
+    }
   });
 });
 
 onBeforeUnmount(() => {
   introGeneration += 1; // invalidate any pending first-load intro
+  window.removeEventListener("popstate", restoreGameFromHistory);
   removeGestureUnlock?.();
   destroyPolyScene();
   clearSelectedTileVisual();
   clearHintTileVisual();
   stopAssembleIntro();
-  if (introClearAnim) {
-    introClearAnim.cancel();
-    introClearAnim = null;
-  }
+  stopClearOut();
   if (refreshRafId !== null) {
     cancelAnimationFrame(refreshRafId);
     refreshRafId = null;
@@ -1229,7 +1278,7 @@ function newGame(): void {
   if (introClearAnim) {
     return;
   }
-  introGeneration += 1; // supersede any pending first-load intro
+  const generation = ++introGeneration; // supersede any pending intro
   clockRunning.value = false; // freeze the clock through sweep + drop-in
   clearSelectedTileVisual();
   clearHintTileVisual();
@@ -1239,12 +1288,44 @@ function newGame(): void {
   // resetGame() replaces the tiles array, which already triggers the mesh
   // re-sync — bumping sceneVersion too would run that heavy sync a second time.
   runClearOut(() => {
+    if (generation !== introGeneration) {
+      return;
+    }
+    pendingGameUrlHistoryMode = "push";
     resetGame();
     tileTopArtReferenceBasis = null;
     resetGestureState();
     pointerStart.value = null;
     scheduleTileVisualRefresh();
     void nextTick(() => runAssembleIntro());
+  });
+}
+
+function restoreGameFromHistory(): void {
+  const state = parseGameUrlHash(window.location.hash);
+  restoringGameFromHistory = true;
+  introGeneration += 1;
+  stopAssembleIntro();
+  stopClearOut();
+  clearSelectedTileVisual();
+  clearHintTileVisual();
+
+  const restored = state ? restoreGame(state, true) : false;
+  if (!restored) {
+    resetGame();
+    clockRunning.value = true;
+  }
+
+  tileTopArtReferenceBasis = null;
+  resetGestureState();
+  pointerStart.value = null;
+  boardPreparing.value = false;
+  sceneVersion.value += 1;
+  scheduleTileVisualRefresh();
+
+  void nextTick(() => {
+    restoringGameFromHistory = false;
+    writeGameUrlState(gameUrlState.value, "replace");
   });
 }
 
@@ -1294,6 +1375,18 @@ watch(
     scheduleTileVisualRefresh();
   },
   { flush: "post" }
+);
+
+watch(
+  gameUrlState,
+  () => {
+    if (restoringGameFromHistory) {
+      return;
+    }
+    writeCurrentGameUrl(pendingGameUrlHistoryMode);
+    pendingGameUrlHistoryMode = "replace";
+  },
+  { immediate: true, flush: "post" }
 );
 
 watch(isWon, (won) => {

@@ -1,13 +1,22 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   canPair,
-  createGameDeal,
   getAvailablePairs,
   getFreeTileIds,
   turtleCells,
   type GameTile,
   type MoveRecord,
 } from "../game/mahjong";
+import { createGameSeed } from "../game/random";
+import {
+  createFreshSessionSnapshot,
+  restoreSessionSnapshot,
+  type MahjongSessionSnapshot,
+} from "../game/sessionState";
+import {
+  gameUrlStateVersion,
+  type GameUrlState,
+} from "../game/urlState";
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
@@ -19,16 +28,21 @@ function formatElapsed(totalSeconds: number): string {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
-export function useMahjongSession() {
-  const initialDeal = createGameDeal();
-  const tiles = ref<GameTile[]>(initialDeal.tiles);
-  const removalOrder = ref<Array<[number, number]>>(initialDeal.removalOrder);
+export function useMahjongSession(initialState: GameUrlState | null = null) {
+  const initialSnapshot =
+    (initialState && restoreSessionSnapshot(initialState)) ??
+    createFreshSessionSnapshot(createGameSeed());
+  const dealSeed = ref(initialSnapshot.seed);
+  const tiles = ref<GameTile[]>(initialSnapshot.deal.tiles);
+  const removalOrder = ref<Array<[number, number]>>(
+    initialSnapshot.deal.removalOrder
+  );
   const selectedTileId = ref<number | null>(null);
-  const elapsedSeconds = ref(0);
+  const elapsedSeconds = ref(initialSnapshot.elapsedSeconds);
   const hintedTileIds = ref<number[]>([]);
   const hintPairIndex = ref(0);
-  const undoStack = ref<MoveRecord[]>([]);
-  const redoStack = ref<MoveRecord[]>([]);
+  const undoStack = ref<MoveRecord[]>(initialSnapshot.undoStack);
+  const redoStack = ref<MoveRecord[]>(initialSnapshot.redoStack);
   // The clock only runs once the board is ready to play (set true after the
   // assemble intro finishes), so the timer doesn't count the animation.
   const clockRunning = ref(false);
@@ -57,11 +71,15 @@ export function useMahjongSession() {
   const hasMoves = computed(() => availablePairs.value.length > 0);
   const canUndo = computed(() => undoStack.value.length > 0);
   const canRedo = computed(() => redoStack.value.length > 0);
-
-  function restartTimer(): void {
-    elapsedSeconds.value = 0;
-    clockRunning.value = false;
-  }
+  const gameUrlState = computed<GameUrlState>(() => {
+    return {
+      version: gameUrlStateVersion,
+      seed: dealSeed.value,
+      removedTileIds: tiles.value
+        .filter((tile) => tile.removed)
+        .map((tile) => tile.id),
+    };
+  });
 
   function startTimer(): void {
     if (timerId !== null) {
@@ -92,9 +110,20 @@ export function useMahjongSession() {
     clearHintState();
   }
 
-  function clearMoveHistory(): void {
-    undoStack.value = [];
-    redoStack.value = [];
+  function applySnapshot(
+    snapshot: MahjongSessionSnapshot,
+    startClockWhenPlayable: boolean
+  ): void {
+    dealSeed.value = snapshot.seed;
+    tiles.value = snapshot.deal.tiles;
+    removalOrder.value = snapshot.deal.removalOrder;
+    undoStack.value = snapshot.undoStack;
+    redoStack.value = snapshot.redoStack;
+    elapsedSeconds.value = snapshot.elapsedSeconds;
+    clearSelectionAndHintState();
+    clockRunning.value =
+      startClockWhenPlayable &&
+      snapshot.deal.tiles.some((tile) => !tile.removed);
   }
 
   function applyMoveRemoval(move: MoveRecord): boolean {
@@ -202,13 +231,20 @@ export function useMahjongSession() {
     return true;
   }
 
-  function resetGame(): void {
-    const deal = createGameDeal();
-    tiles.value = deal.tiles;
-    removalOrder.value = deal.removalOrder;
-    clearMoveHistory();
-    clearSelectionAndHintState();
-    restartTimer();
+  function restoreGame(
+    state: GameUrlState,
+    startClockWhenPlayable = false
+  ): boolean {
+    const snapshot = restoreSessionSnapshot(state);
+    if (!snapshot) {
+      return false;
+    }
+    applySnapshot(snapshot, startClockWhenPlayable);
+    return true;
+  }
+
+  function resetGame(seed = createGameSeed()): void {
+    applySnapshot(createFreshSessionSnapshot(seed), false);
   }
 
   onMounted(startTimer);
@@ -229,12 +265,14 @@ export function useMahjongSession() {
     hintedTileIds,
     canUndo,
     canRedo,
+    gameUrlState,
     clearHintState,
     clearSelectionAndHintState,
     removePair,
     undoMove,
     redoMove,
     showHint,
+    restoreGame,
     resetGame,
   };
 }
